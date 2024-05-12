@@ -1,4 +1,4 @@
-package storage
+package file
 
 // FileWriter 定义封装文件操作的基本行为 因为bitcask模型只有对文件的读 追加和整理 所以这里并不涉及对文件的已经写入的数据进行修改
 type FileWriter interface {
