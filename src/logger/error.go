@@ -13,6 +13,8 @@ var (
 	FieldIsExisted    = errors.New("Field is Existed! \n")
 	KeyIsNotExisted   = errors.New("Key is Not Existed! \n")
 	FieldIsNotExisted = errors.New("Field is Not Existed! \n")
+
+	ValueIsExpired = errors.New("This Value was Expired! \n")
 )
 
 // 不准备常驻的错误们

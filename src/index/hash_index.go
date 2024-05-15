@@ -1,7 +1,6 @@
 package index
 
 import (
-	"MisakaDB"
 	"MisakaDB/src/logger"
 	"MisakaDB/src/storage"
 	"MisakaDB/src/util"
@@ -11,19 +10,25 @@ import (
 )
 
 type HashIndex struct {
-	index           map[string]map[string]*IndexNode
-	mutex           sync.RWMutex
-	activeFile      *storage.RecordFile
-	archivedFile    map[uint32]*storage.RecordFile
-	archivedFileNum uint32
+	index        map[string]map[string]*IndexNode
+	mutex        sync.RWMutex
+	activeFile   *storage.RecordFile
+	archivedFile map[uint32]*storage.RecordFile
+
+	fileIOMode     storage.FileIOType
+	baseFolderPath string
+	fileMaxSize    int64
 }
 
-// BuildIndex 给定当前活跃文件和归档文件 重新构建索引 该方法只会在数据库启动时被调用
-func BuildIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, archivedFileNum uint32) (*HashIndex, error) {
+// BuildHashIndex 给定当前活跃文件和归档文件 重新构建索引 该方法只会在数据库启动时被调用 如果不存在旧的文件 则新建一个活跃文件
+func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, fileIOMode storage.FileIOType, baseFolderPath string, fileMaxSize int64) (*HashIndex, error) {
 	result := &HashIndex{
-		activeFile:      activeFile,
-		archivedFile:    archivedFile,
-		archivedFileNum: archivedFileNum,
+		activeFile:     activeFile,
+		archivedFile:   archivedFile,
+		fileIOMode:     fileIOMode,
+		baseFolderPath: baseFolderPath,
+		fileMaxSize:    fileMaxSize,
+		index:          make(map[string]map[string]*IndexNode),
 	}
 
 	var offset int64
@@ -32,8 +37,19 @@ func BuildIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage
 	var entry *storage.Entry
 	var e error
 
-	// 先读取已经归档的entry
-	for i := uint32(1); i <= archivedFileNum; i++ {
+	// 如果活跃文件都读取不到的话 肯定也没有归档文件了 直接返回即可
+	if activeFile == nil {
+		result.activeFile, e = storage.NewRecordFile(result.fileIOMode, storage.Hash, 1, result.baseFolderPath, result.fileMaxSize)
+		if e != nil {
+			return nil, e
+		}
+		result.archivedFile = make(map[uint32]*storage.RecordFile) // 如果activeFile为空 那么传进来的archivedFile一定也为空 这时再赋值会报错
+		result.archivedFile[1] = result.activeFile
+		return result, nil
+	}
+
+	// 读取所有归档文件的entry 因为活跃文件也在这个归档文件里 所以不再单独读取活跃文件
+	for i := uint32(1); i <= uint32(len(archivedFile)); i++ {
 		recordFile, ok := archivedFile[uint32(i)]
 		if ok == false {
 			continue
@@ -53,22 +69,23 @@ func BuildIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage
 		}
 	}
 
-	// 再读取还在active文件里的entry
-	offset = 0
-	fileLength, e = activeFile.Length()
-	if e != nil {
-		return nil, e
-	}
-	for offset < fileLength {
-		entry, entryLength, e = activeFile.ReadIntoEntry(offset)
-		e = result.handleEntry(entry, activeFile.GetFileID(), offset)
-		if e != nil {
-			return nil, e
-		}
-		offset += entryLength
-	}
-
 	return result, nil
+}
+
+func (hi *HashIndex) CloseIndex() error {
+	hi.mutex.Lock()
+	defer hi.mutex.Unlock()
+	for _, v := range hi.archivedFile {
+		e := v.Sync()
+		if e != nil {
+			return e
+		}
+		e = v.Close()
+		if e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 // HSet 给定key field value 设定值 如果key field都存在即为更新值
@@ -86,28 +103,22 @@ func (hi *HashIndex) HSet(key string, field string, value string, expiredAt int6
 	hi.mutex.Lock()
 	defer hi.mutex.Unlock()
 
-	// 写入文件 如果文件过大无法写入 就新开一个文件继续存储 同时保存文件编号和文件偏移值
-	indexNode.offset = hi.activeFile.GetOffset()
-	e := hi.activeFile.WriteEntryIntoFile(entry)
-	if errors.Is(e, logger.FileBytesIsMaxedOut) {
-		hi.archivedFile[hi.activeFile.GetFileID()] = hi.activeFile
-		hi.activeFile, e = storage.NewRecordFile(storage.TraditionalIOFile, storage.Hash, hi.archivedFileNum+1, MisakaDB.MisakaDataBaseFolderPath, MisakaDB.RecordFileMaxSize)
-		if e != nil {
-			return e
-		}
-		indexNode.offset = hi.activeFile.GetOffset()
-		e = hi.activeFile.WriteEntryIntoFile(entry)
-		if e != nil {
-			return e
-		}
-		hi.archivedFileNum += 1
-	} else if e != nil {
+	// 写入文件 同时记录offset和fileID
+	offset, e := hi.writeEntry(entry)
+	if e != nil {
 		return e
 	}
+	indexNode.offset = offset
 	indexNode.fileID = hi.activeFile.GetFileID()
+	indexNode.value = []byte(value)
 
 	// 最后写入索引
-	hi.index[key][field] = indexNode
+	if _, ok := hi.index[key]; ok {
+		hi.index[key][field] = indexNode
+	} else {
+		hi.index[key] = make(map[string]*IndexNode)
+		hi.index[key][field] = indexNode
+	}
 	return nil
 }
 
@@ -139,29 +150,22 @@ func (hi *HashIndex) HGet(key string, field string) (string, error) {
 	if ok != true {
 		return "", logger.FieldIsNotExisted
 	}
-	var result *storage.Entry
-	var e error
 
-	// 先判断这个node所对应的值是不是指向activeFile 然后再去对应位置取
-	if indexNode.fileID == hi.activeFile.GetFileID() {
-		result, _, e = hi.activeFile.ReadIntoEntry(indexNode.offset)
-		if e != nil {
-			return "", e
-		}
-	} else {
-		result, _, e = hi.archivedFile[indexNode.fileID].ReadIntoEntry(indexNode.offset)
-		if e != nil {
-			return "", e
-		}
+	// 如果过期时间为-1则说明永不过期
+	if indexNode.expiredAt < time.Now().Unix() && indexNode.expiredAt != -1 {
+		// attention 过期logger
+		// 读取的Entry过期 删索引
+		delete(hi.index[key], field)
+		return "", logger.ValueIsExpired
 	}
 
-	return string(result.Value), nil
+	return string(indexNode.value), nil
 }
 
 // HDel 根据key和field尝试删除键值对 如果deleteField为true 则认为删的是hash里面的键值对 反之则认为删除的是整个hash
 func (hi *HashIndex) HDel(key string, field string, deleteField bool) error {
 
-	fieldIsExist, e := hi.HExist(key, field) // 查key
+	fieldIsExist, e := hi.HExist(key, field) // 查key和field
 	if e != nil {
 		return e
 	}
@@ -180,20 +184,9 @@ func (hi *HashIndex) HDel(key string, field string, deleteField bool) error {
 			Value:     []byte{},
 			ExpiredAt: 0,
 		}
-		// 尝试写入删除Entry
-		e = hi.activeFile.WriteEntryIntoFile(entry)
-		if errors.Is(e, logger.FileBytesIsMaxedOut) {
-			hi.archivedFile[hi.activeFile.GetFileID()] = hi.activeFile
-			hi.activeFile, e = storage.NewRecordFile(storage.TraditionalIOFile, storage.Hash, hi.archivedFileNum+1, MisakaDB.MisakaDataBaseFolderPath, MisakaDB.RecordFileMaxSize)
-			if e != nil {
-				return e
-			}
-			e = hi.activeFile.WriteEntryIntoFile(entry)
-			if e != nil {
-				return e
-			}
-			hi.archivedFileNum += 1
-		} else if e != nil {
+		// 尝试写入删除Entry 删除Entry不需要记录offset
+		_, e = hi.writeEntry(entry)
+		if e != nil {
 			return e
 		}
 		// 然后修改索引
@@ -207,20 +200,9 @@ func (hi *HashIndex) HDel(key string, field string, deleteField bool) error {
 			Value:     []byte{},
 			ExpiredAt: 0,
 		}
-		// 尝试写入删除Entry
-		e = hi.activeFile.WriteEntryIntoFile(entry)
-		if errors.Is(e, logger.FileBytesIsMaxedOut) {
-			hi.archivedFile[hi.activeFile.GetFileID()] = hi.activeFile
-			hi.activeFile, e = storage.NewRecordFile(storage.TraditionalIOFile, storage.Hash, hi.archivedFileNum+1, MisakaDB.MisakaDataBaseFolderPath, MisakaDB.RecordFileMaxSize)
-			if e != nil {
-				return e
-			}
-			e = hi.activeFile.WriteEntryIntoFile(entry)
-			if e != nil {
-				return e
-			}
-			hi.archivedFileNum += 1
-		} else if e != nil {
+		// 尝试写入删除Entry 删除Entry不需要记录offset
+		_, e = hi.writeEntry(entry)
+		if e != nil {
 			return e
 		}
 		// 然后修改索引
@@ -263,21 +245,47 @@ func (hi *HashIndex) HStrLen(key string, field string) (int, error) {
 	return len(value), nil
 }
 
+// writeEntry 尝试将entry写入文件 如果活跃文件写满则自动新开一个文件继续尝试写入 如果写入成功则返回nil和写入前的offset
+func (hi *HashIndex) writeEntry(entry *storage.Entry) (int64, error) {
+	offset := hi.activeFile.GetOffset()
+	e := hi.activeFile.WriteEntryIntoFile(entry)
+	// 如果文件已满
+	if errors.Is(e, logger.FileBytesIsMaxedOut) {
+		// 开一个新的文件 这个新的活跃文件的序号自动在之前的活跃文件上 + 1
+		hi.activeFile, e = storage.NewRecordFile(hi.fileIOMode, storage.Hash, hi.activeFile.GetFileID()+1, hi.baseFolderPath, hi.fileMaxSize)
+		if e != nil {
+			return 0, e
+		}
+		// 这个新的活跃文件写入归档文件映射中
+		hi.archivedFile[hi.activeFile.GetFileID()] = hi.activeFile
+		// 再尝试写入
+		offset = hi.activeFile.GetOffset()
+		e = hi.activeFile.WriteEntryIntoFile(entry)
+		if e != nil {
+			return 0, e
+		}
+	} else if e != nil {
+		return 0, e
+	}
+	//e = hi.activeFile.Sync()
+	//if e != nil {
+	//	return 0, e
+	//}
+	return offset, nil
+}
+
 // handleEntry 接收Entry 并且写入索引
 // attention 它只对索引进行操作
 func (hi *HashIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int64) error {
-	if entry.ExpiredAt < time.Now().Unix() {
-		// attention 过期logger
-		return nil
-	}
-
-	hi.mutex.Lock()
-	defer hi.mutex.Unlock()
 
 	key, field, e := util.DecodeKeyAndField(entry.Key)
 	if e != nil {
 		return e
 	}
+
+	hi.mutex.Lock()
+	defer hi.mutex.Unlock()
+
 	switch entry.EntryType {
 	case storage.TypeDelete:
 		{
@@ -288,10 +296,30 @@ func (hi *HashIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int
 			}
 		}
 	case storage.TypeRecord:
-		hi.index[key][field] = &IndexNode{
-			expiredAt: entry.ExpiredAt,
-			fileID:    fileID,
-			offset:    offset,
+
+		// attention 这里之所以只对RecordEntry进行检查 是因为对map的delete函数 如果传入的map本身就是空或者要删除的键找不到值 它就直接返回了 并不会报错
+		// 所以DeleteEntry不需要过期检查 过期就过期吧 过期了也只是no-op而已
+		// 如果过期时间为-1则说明永不过期
+		if entry.ExpiredAt < time.Now().Unix() && entry.ExpiredAt != -1 {
+			// attention 过期logger
+			return nil
+		}
+
+		if _, ok := hi.index[key]; ok {
+			hi.index[key][field] = &IndexNode{
+				value:     entry.Value,
+				expiredAt: entry.ExpiredAt,
+				fileID:    fileID,
+				offset:    offset,
+			}
+		} else {
+			hi.index[key] = make(map[string]*IndexNode)
+			hi.index[key][field] = &IndexNode{
+				value:     entry.Value,
+				expiredAt: entry.ExpiredAt,
+				fileID:    fileID,
+				offset:    offset,
+			}
 		}
 	}
 	return nil

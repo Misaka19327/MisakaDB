@@ -1,94 +1,111 @@
 package main
 
 import (
-	"MisakaDB/src/storage"
+	"MisakaDB/src"
 	"fmt"
 )
 
 func main() {
-	testFile, e := storage.NewRecordFile(storage.TraditionalIOFile, storage.String, 1, "D:\\MisakaDBTest", 65536)
+	db, e := src.Init()
 	if e != nil {
-		fmt.Println(e)
+		fmt.Println(e.Error())
 		return
 	}
-	testEntry := &storage.Entry{
-		Key:       []byte("testKey"),
-		Value:     []byte("testValue"),
-		EntryType: storage.TypeRecord,
-		ExpiredAt: 0,
-	}
-	e = testFile.WriteEntryIntoFile(testEntry)
+	e = db.StartServe()
 	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	e = testFile.Sync()
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	testReadEntry, length, e := testFile.ReadIntoEntry(0)
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	fmt.Println(string(testReadEntry.Key))
-	fmt.Println(string(testReadEntry.Value))
-	fmt.Println(length)
-
-	testEntry = &storage.Entry{
-		Key:       []byte("testKey----2"),
-		Value:     []byte("testValue----2"),
-		EntryType: storage.TypeRecord,
-		ExpiredAt: 0,
-	}
-	e = testFile.WriteEntryIntoFile(testEntry)
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	e = testFile.Sync()
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	testReadEntry, length, e = testFile.ReadIntoEntry(25)
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	fmt.Println(string(testReadEntry.Key))
-	fmt.Println(string(testReadEntry.Value))
-	fmt.Println(length)
-
-	testEntry = &storage.Entry{
-		Key:       []byte("Key3"),
-		Value:     []byte("Value3"),
-		EntryType: storage.TypeRecord,
-		ExpiredAt: 0,
-	}
-	e = testFile.WriteEntryIntoFile(testEntry)
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	e = testFile.Sync()
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	testReadEntry, length, e = testFile.ReadIntoEntry(59)
-	if e != nil {
-		fmt.Println(e)
-		return
-	}
-	fmt.Println(string(testReadEntry.Key))
-	fmt.Println(string(testReadEntry.Value))
-	fmt.Println(length)
-
-	e = testFile.Close()
-	if e != nil {
-		fmt.Println(e)
-		return
+		fmt.Println(e.Error())
 	}
 }
+
+//var addr = ":6380"
+//
+//func main() {
+//	var mu sync.RWMutex
+//	var items = make(map[string][]byte)
+//	var ps redcon.PubSub
+//	go log.Printf("started server at %s", addr)
+//	server := redcon.NewServer(addr,
+//		func(conn redcon.Conn, cmd redcon.Command) {
+//			switch strings.ToLower(string(cmd.Args[0])) {
+//			default:
+//				conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
+//			case "ping":
+//				conn.WriteString("PONG")
+//			case "quit":
+//				conn.WriteString("OK")
+//				conn.Close()
+//			case "set":
+//				if len(cmd.Args) != 3 {
+//					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+//					return
+//				}
+//				mu.Lock()
+//				items[string(cmd.Args[1])] = cmd.Args[2]
+//				mu.Unlock()
+//				conn.WriteString("OK")
+//			case "get":
+//				if len(cmd.Args) != 2 {
+//					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+//					return
+//				}
+//				mu.RLock()
+//				val, ok := items[string(cmd.Args[1])]
+//				mu.RUnlock()
+//				if !ok {
+//					conn.WriteNull()
+//				} else {
+//					conn.WriteBulk(val)
+//				}
+//			case "del":
+//				if len(cmd.Args) != 2 {
+//					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+//					return
+//				}
+//				mu.Lock()
+//				_, ok := items[string(cmd.Args[1])]
+//				delete(items, string(cmd.Args[1]))
+//				mu.Unlock()
+//				if !ok {
+//					conn.WriteInt(0)
+//				} else {
+//					conn.WriteInt(1)
+//				}
+//			case "publish":
+//				if len(cmd.Args) != 3 {
+//					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+//					return
+//				}
+//				conn.WriteInt(ps.Publish(string(cmd.Args[1]), string(cmd.Args[2])))
+//			case "subscribe", "psubscribe":
+//				if len(cmd.Args) < 2 {
+//					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+//					return
+//				}
+//				command := strings.ToLower(string(cmd.Args[0]))
+//				for i := 1; i < len(cmd.Args); i++ {
+//					if command == "psubscribe" {
+//						ps.Psubscribe(conn, string(cmd.Args[i]))
+//					} else {
+//						ps.Subscribe(conn, string(cmd.Args[i]))
+//					}
+//				}
+//			}
+//		},
+//		func(conn redcon.Conn) bool {
+//			// Use this function to accept or deny the connection.
+//			log.Printf("accept: %s", conn.RemoteAddr())
+//			return true
+//		},
+//		func(conn redcon.Conn, err error) {
+//			// This is called when the connection has been closed
+//			// log.Printf("closed: %s, err: %v", conn.RemoteAddr(), err)
+//		},
+//	)
+//	fmt.Println("test")
+//	e := server.ListenAndServe()
+//	if e != nil {
+//		fmt.Println(e)
+//		return
+//	}
+//	fmt.Println("test")
+//}
