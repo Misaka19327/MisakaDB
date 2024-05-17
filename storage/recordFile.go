@@ -1,8 +1,9 @@
 package storage
 
 import (
-	"MisakaDB/src/file"
-	"MisakaDB/src/logger"
+	"MisakaDB/file"
+	"MisakaDB/logger"
+	"MisakaDB/util"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -79,6 +80,9 @@ func NewRecordFile(ioType FileIOType, dataType FileForData, fid uint32, path str
 	case TraditionalIOFile:
 		fileWriter, e = file.NewFileIO(fileFullPath)
 	}
+	if e != nil {
+		return nil, e
+	}
 	result.file = fileWriter
 	return result, nil
 }
@@ -112,6 +116,7 @@ func LoadRecordFileFromDisk(filePath string, fileMaxSize int64) (*RecordFile, er
 func (rf *RecordFile) WriteEntryIntoFile(entry *Entry) error {
 	writeContent, length := entry.Encode()
 	if int64(length)+rf.newestOffset > rf.fileMaxSize {
+		logger.GenerateErrorLog(false, false, logger.FileBytesIsMaxedOut.Error(), strconv.Itoa(int(rf.fileID)), strconv.Itoa(int(rf.dataType)))
 		return logger.FileBytesIsMaxedOut
 	}
 	e := rf.file.Write(writeContent, int(rf.newestOffset))
@@ -142,6 +147,7 @@ func (rf *RecordFile) ReadIntoEntry(offset int64) (*Entry, int64, error) {
 		return nil, 0, e
 	}
 	if crc := getEntryCRC(result, entryHeaderBytes[crc32.Size:index]); crc != entryHeader.crc {
+		logger.GenerateErrorLog(false, false, logger.CRCCheckSumNotPassed.Error(), util.TurnByteArrayToString(entryHeaderBytes))
 		return nil, 0, logger.CRCCheckSumNotPassed
 	}
 	entrySize := index + int64(entryHeader.keyLength+entryHeader.valueLength)
@@ -183,6 +189,7 @@ func (rf *RecordFile) GetOffset() int64 {
 // getFileName 给record文件起名 示例名字：record.string.000000001.misaka
 func getFileName(fid uint32, dataType FileForData, path string) (string, error) {
 	if _, ok := fileNameSuffix[dataType]; !ok {
+		logger.GenerateErrorLog(false, true, logger.UnSupportDataType.Error(), strconv.Itoa(int(dataType)))
 		return "", logger.UnSupportDataType
 	}
 	fileName := fileNameSuffix[dataType] + fmt.Sprintf("%09d", fid) + ".misaka"
@@ -194,6 +201,7 @@ func parseFileName(fileName string) (uint32, FileForData, error) {
 	strs := strings.Split(fileName, ".")
 	resultNum, e := strconv.Atoi(strs[2])
 	if e != nil {
+		logger.GenerateErrorLog(false, true, e.Error(), fileName)
 		return 0, String, e
 	}
 	return uint32(resultNum), filenameToDataTypeMap[strs[1]], nil

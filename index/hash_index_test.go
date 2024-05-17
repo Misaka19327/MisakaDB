@@ -1,7 +1,7 @@
 package index
 
 import (
-	"MisakaDB/src/storage"
+	"MisakaDB/storage"
 	"strconv"
 	"testing"
 	"time"

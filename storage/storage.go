@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"MisakaDB/logger"
 	"os"
 	"path/filepath"
 )
@@ -17,6 +18,7 @@ func RecordFilesInit(path string, fileMaxSize int64) (activeFiles map[FileForDat
 	}
 	e = filepath.Walk(path, walkFunc)
 	if e != nil {
+		logger.GenerateErrorLog(false, false, e.Error(), path)
 		return nil, nil, e
 	}
 

@@ -1,9 +1,9 @@
-package src
+package main
 
 import (
-	"MisakaDB/src/index"
-	"MisakaDB/src/logger"
-	"MisakaDB/src/storage"
+	"MisakaDB/index"
+	"MisakaDB/logger"
+	"MisakaDB/storage"
 	"errors"
 	"github.com/tidwall/redcon"
 	"strings"
@@ -14,17 +14,28 @@ const (
 	MisakaDataBaseFolderPath = "D:\\MisakaDBTest"
 	RecordFileMaxSize        = 65536
 	RecordFileIOMode         = storage.TraditionalIOFile
-	MisakaServerAddr         = ":6380"
+	MisakaServerAddr         = ":23456"
+	LoggerPath               = "D:\\MisakaDBLog"
 )
 
 type MisakaDataBase struct {
 	server *redcon.Server
 
 	hashIndex *index.HashIndex
+
+	logger *logger.Logger
 }
 
 func Init() (*MisakaDataBase, error) {
 	database := &MisakaDataBase{}
+	var e error
+
+	// 初始化logger
+	database.logger, e = logger.NewLogger(LoggerPath)
+	if e != nil {
+		return nil, e
+	}
+	logger.GenerateInfoLog("Logger is Ready!")
 
 	// 读取文件
 	activeFiles, archiveFiles, e := storage.RecordFilesInit(MisakaDataBaseFolderPath, RecordFileMaxSize)
@@ -39,6 +50,7 @@ func Init() (*MisakaDataBase, error) {
 			if e != nil {
 				return nil, e
 			}
+			logger.GenerateInfoLog("Hash Index is Ready!")
 		}
 	}
 
@@ -47,6 +59,7 @@ func Init() (*MisakaDataBase, error) {
 	if e != nil {
 		return nil, e
 	}
+	logger.GenerateInfoLog("Server is Ready!")
 
 	return database, nil
 }
@@ -56,14 +69,19 @@ func (db *MisakaDataBase) Destroy() error {
 	// 关闭服务器
 	e := db.server.Close()
 	if e != nil {
+		logger.GenerateErrorLog(false, false, e.Error())
 		return e
 	}
 
-	// 关闭索引
+	// 关闭索引 索引里会关闭文件的
 	e = db.hashIndex.CloseIndex()
 	if e != nil {
 		return e
 	}
+
+	// 关闭logger
+	db.logger.StopLogger()
+
 	return nil
 }
 
@@ -87,7 +105,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				conn.WriteString("OK")
 				e = conn.Close()
 				if e != nil {
-					// attention logger
+					logger.GenerateErrorLog(false, false, e.Error())
 				}
 			//case "set":
 			//	if len(cmd.Args) != 3 {
@@ -99,6 +117,7 @@ func (db *MisakaDataBase) ServerInit() error {
 
 			// hash部分的命令解析
 			case "hset":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hset")
 				if len(cmd.Args) == 4 {
 					// hset key field value
 					e = db.hashIndex.HSet(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), -1)
@@ -117,6 +136,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hsetnx":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hsetnx")
 				if len(cmd.Args) == 4 {
 					// hset key field value
 					e = db.hashIndex.HSetNX(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), -1)
@@ -135,6 +155,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hget":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hget")
 				if len(cmd.Args) == 3 {
 					// hget key field
 					var result string
@@ -153,6 +174,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hdel":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hdel")
 				if len(cmd.Args) == 3 {
 					// hdel key field
 					e = db.hashIndex.HDel(string(cmd.Args[1]), string(cmd.Args[2]), true)
@@ -177,6 +199,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hlen":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hlen")
 				if len(cmd.Args) == 2 {
 					// hlen key
 					var result int
@@ -193,6 +216,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hexists":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hexists")
 				if len(cmd.Args) == 2 {
 					// hexists key field
 					var result bool
@@ -213,6 +237,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hstrlen":
+				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hstrlen")
 				if len(cmd.Args) == 2 {
 					// hstrlen key field
 					var result int
@@ -234,11 +259,12 @@ func (db *MisakaDataBase) ServerInit() error {
 			}
 		},
 		func(conn redcon.Conn) bool {
-			// attention logger
+			logger.GenerateInfoLog("DataBase Connection Accept: " + conn.RemoteAddr())
 			return true
 		},
 		func(conn redcon.Conn, err error) {
-			// attention logger
+			logger.GenerateInfoLog("DataBase Connection Closed: " + conn.RemoteAddr())
+			return
 		},
 	)
 
@@ -246,7 +272,7 @@ func (db *MisakaDataBase) ServerInit() error {
 }
 
 func (db *MisakaDataBase) StartServe() error {
-
+	logger.GenerateInfoLog("Server start Listen And Serve!")
 	return db.server.ListenAndServe()
 	// 翻源码可知：
 	// ListenAndServe -> ListenServeAndSignal -> serve -> 如果有tcp连接 -> go handle

@@ -1,9 +1,9 @@
 package index
 
 import (
-	"MisakaDB/src/logger"
-	"MisakaDB/src/storage"
-	"MisakaDB/src/util"
+	"MisakaDB/logger"
+	"MisakaDB/storage"
+	"MisakaDB/util"
 	"errors"
 	"sync"
 	"time"
@@ -61,6 +61,9 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 		}
 		for offset < fileLength {
 			entry, entryLength, e = recordFile.ReadIntoEntry(offset)
+			if e != nil {
+				return nil, e
+			}
 			e = result.handleEntry(entry, recordFile.GetFileID(), offset)
 			if e != nil {
 				return nil, e
@@ -130,6 +133,7 @@ func (hi *HashIndex) HSetNX(key string, field string, value string, expiredAt in
 		return e
 	}
 	if ok == true {
+		logger.GenerateErrorLog(false, false, logger.FieldIsExisted.Error(), key, field, value)
 		return logger.FieldIsExisted
 	} else {
 		return hi.HSet(key, field, value, expiredAt)
@@ -143,17 +147,19 @@ func (hi *HashIndex) HGet(key string, field string) (string, error) {
 
 	_, ok := hi.index[key]
 	if ok != true {
+		logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), key, field)
 		return "", logger.KeyIsNotExisted
 	}
 
 	indexNode, ok := hi.index[key][field]
 	if ok != true {
+		logger.GenerateErrorLog(false, false, logger.FieldIsNotExisted.Error(), key, field)
 		return "", logger.FieldIsNotExisted
 	}
 
 	// 如果过期时间为-1则说明永不过期
 	if indexNode.expiredAt < time.Now().Unix() && indexNode.expiredAt != -1 {
-		// attention 过期logger
+		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + " {" + field + ": " + string(indexNode.value) + "}")
 		// 读取的Entry过期 删索引
 		delete(hi.index[key], field)
 		return "", logger.ValueIsExpired
@@ -176,6 +182,7 @@ func (hi *HashIndex) HDel(key string, field string, deleteField bool) error {
 	if deleteField {
 		// 删键值对
 		if fieldIsExist != true { // 查field
+			logger.GenerateErrorLog(false, false, logger.FieldIsNotExisted.Error(), key, field)
 			return logger.FieldIsNotExisted
 		}
 		entry := &storage.Entry{
@@ -218,6 +225,7 @@ func (hi *HashIndex) HLen(key string) (int, error) {
 
 	_, ok := hi.index[key]
 	if ok != true {
+		logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), key)
 		return 0, logger.KeyIsNotExisted
 	}
 	return len(hi.index[key]), nil
@@ -229,6 +237,7 @@ func (hi *HashIndex) HExist(key string, field string) (bool, error) {
 	defer hi.mutex.RUnlock()
 	_, ok := hi.index[key]
 	if ok != true {
+		logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), key)
 		return false, logger.KeyIsNotExisted
 	}
 	_, ok = hi.index[key][field]

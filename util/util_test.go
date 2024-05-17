@@ -13,3 +13,8 @@ func TestDecodeKeyAndField(t *testing.T) {
 	t.Log(key)
 	t.Log(field)
 }
+
+func TestGenerateLogFilePath(t *testing.T) {
+	result := GenerateLogFilePath("D:\\MisakaDBLog")
+	t.Log(result)
+}
