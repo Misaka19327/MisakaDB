@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // FileForData 指定该数据文件存储的数据类型
@@ -51,6 +52,8 @@ type RecordFile struct {
 	newestOffset int64           // 该文件写入位置 或者说最新偏移位也可以
 	dataType     FileForData     // 该文件存储的键值对的类型
 	fileMaxSize  int64           // 该文件最大的大小
+
+	IsSyncing bool // 是否在定时sync
 }
 
 // FileIOType 指定文件的读写模式
@@ -158,7 +161,7 @@ func (rf *RecordFile) ReadIntoEntry(offset int64) (*Entry, int64, error) {
 }
 
 // Sync 强制刷新缓冲区到文件中
-func (rf *RecordFile) Sync() error {
+func (rf *RecordFile) sync() error {
 	return rf.file.Sync()
 }
 
@@ -182,8 +185,35 @@ func (rf *RecordFile) GetFileID() uint32 {
 	return rf.fileID
 }
 
+// GetOffset 获取当前文件的最新offset
 func (rf *RecordFile) GetOffset() int64 {
 	return rf.newestOffset
+}
+
+// StartSyncRoutine 开始定时Sync 时间间隔以duration为准
+func (rf *RecordFile) StartSyncRoutine(duration time.Duration) {
+	rf.IsSyncing = true
+	logger.GenerateInfoLog("File " + strconv.Itoa(int(rf.fileID)) + " is Syncing!")
+	go func() {
+		for {
+			if rf.IsSyncing {
+				time.Sleep(duration)
+				e := rf.file.Sync()
+				if e != nil { // 一旦报错就结束定时同步
+					return
+				}
+			} else {
+				logger.GenerateInfoLog("File " + strconv.Itoa(int(rf.fileID)) + " Stop Sync!")
+				_ = rf.file.Sync()
+				return
+			}
+		}
+	}()
+}
+
+func (rf *RecordFile) StopSyncRoutine() {
+	rf.IsSyncing = false
+	return
 }
 
 // getFileName 给record文件起名 示例名字：record.string.000000001.misaka

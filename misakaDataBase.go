@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/tidwall/redcon"
 	"strings"
+	"time"
 )
 
 // 以下为可选配置项
@@ -16,14 +17,14 @@ const (
 	RecordFileIOMode         = storage.TraditionalIOFile
 	MisakaServerAddr         = ":23456"
 	LoggerPath               = "D:\\MisakaDBLog"
+	SyncDuration             = 1000 // 单位为毫秒
 )
 
 type MisakaDataBase struct {
 	server *redcon.Server
+	logger *logger.Logger
 
 	hashIndex *index.HashIndex
-
-	logger *logger.Logger
 }
 
 func Init() (*MisakaDataBase, error) {
@@ -46,12 +47,18 @@ func Init() (*MisakaDataBase, error) {
 	// 开始构建索引
 	for key, value := range activeFiles {
 		if key == storage.Hash {
-			database.hashIndex, e = index.BuildHashIndex(value, archiveFiles[storage.Hash], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize)
+			database.hashIndex, e = index.BuildHashIndex(value, archiveFiles[storage.Hash], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
 			if e != nil {
 				return nil, e
 			}
 			logger.GenerateInfoLog("Hash Index is Ready!")
 		}
+	}
+
+	// 开始检查索引是否构建 如果否 构建一个空的索引
+	// 这是防activeFiles本身
+	if database.hashIndex == nil {
+		database.hashIndex, e = index.BuildHashIndex(nil, nil, RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
 	}
 
 	// 初始化服务器
@@ -276,5 +283,5 @@ func (db *MisakaDataBase) StartServe() error {
 	return db.server.ListenAndServe()
 	// 翻源码可知：
 	// ListenAndServe -> ListenServeAndSignal -> serve -> 如果有tcp连接 -> go handle
-	// 所以ListenServeAndSignal是阻塞线程监听的]
+	// 所以ListenServeAndSignal是阻塞线程监听的
 }

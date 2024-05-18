@@ -18,10 +18,11 @@ type HashIndex struct {
 	fileIOMode     storage.FileIOType
 	baseFolderPath string
 	fileMaxSize    int64
+	syncDuration   time.Duration
 }
 
 // BuildHashIndex 给定当前活跃文件和归档文件 重新构建索引 该方法只会在数据库启动时被调用 如果不存在旧的文件 则新建一个活跃文件
-func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, fileIOMode storage.FileIOType, baseFolderPath string, fileMaxSize int64) (*HashIndex, error) {
+func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, fileIOMode storage.FileIOType, baseFolderPath string, fileMaxSize int64, syncDuration time.Duration) (*HashIndex, error) {
 	result := &HashIndex{
 		activeFile:     activeFile,
 		archivedFile:   archivedFile,
@@ -29,6 +30,7 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 		baseFolderPath: baseFolderPath,
 		fileMaxSize:    fileMaxSize,
 		index:          make(map[string]map[string]*IndexNode),
+		syncDuration:   syncDuration,
 	}
 
 	var offset int64
@@ -45,6 +47,7 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 		}
 		result.archivedFile = make(map[uint32]*storage.RecordFile) // 如果activeFile为空 那么传进来的archivedFile一定也为空 这时再赋值会报错
 		result.archivedFile[1] = result.activeFile
+		result.activeFile.StartSyncRoutine(syncDuration) // 开始定时同步
 		return result, nil
 	}
 
@@ -71,6 +74,7 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 			offset += entryLength
 		}
 	}
+	result.activeFile.StartSyncRoutine(syncDuration)
 
 	return result, nil
 }
@@ -79,11 +83,10 @@ func (hi *HashIndex) CloseIndex() error {
 	hi.mutex.Lock()
 	defer hi.mutex.Unlock()
 	for _, v := range hi.archivedFile {
-		e := v.Sync()
-		if e != nil {
-			return e
+		if v.IsSyncing {
+			v.StopSyncRoutine()
 		}
-		e = v.Close()
+		e := v.Close()
 		if e != nil {
 			return e
 		}
@@ -260,6 +263,8 @@ func (hi *HashIndex) writeEntry(entry *storage.Entry) (int64, error) {
 	e := hi.activeFile.WriteEntryIntoFile(entry)
 	// 如果文件已满
 	if errors.Is(e, logger.FileBytesIsMaxedOut) {
+		// 先结束旧文件的定时同步
+		hi.activeFile.StopSyncRoutine()
 		// 开一个新的文件 这个新的活跃文件的序号自动在之前的活跃文件上 + 1
 		hi.activeFile, e = storage.NewRecordFile(hi.fileIOMode, storage.Hash, hi.activeFile.GetFileID()+1, hi.baseFolderPath, hi.fileMaxSize)
 		if e != nil {
@@ -267,6 +272,8 @@ func (hi *HashIndex) writeEntry(entry *storage.Entry) (int64, error) {
 		}
 		// 这个新的活跃文件写入归档文件映射中
 		hi.archivedFile[hi.activeFile.GetFileID()] = hi.activeFile
+		// 先开启定时同步
+		hi.activeFile.StartSyncRoutine(hi.syncDuration)
 		// 再尝试写入
 		offset = hi.activeFile.GetOffset()
 		e = hi.activeFile.WriteEntryIntoFile(entry)

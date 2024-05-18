@@ -46,7 +46,7 @@ func (f *FileIO) Read(buf []byte, offset int) error {
 func (f *FileIO) Sync() error {
 	e := f.file.Sync()
 	if e != nil {
-		logger.GenerateErrorLog(false, false, e.Error(), f.file.Name())
+		logger.GenerateErrorLog(false, true, e.Error(), f.file.Name())
 	}
 	return e
 }

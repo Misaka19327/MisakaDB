@@ -13,12 +13,10 @@ type MMapFile struct {
 //func NewMMapFile(filePath string) (*MMapFile, error) {
 //	file, e := os.OpenFile(filePath, os.O_CREATE | os.O_RDWR, 0644)
 //	if e != nil {
-//		// todo logger
 //		return nil, e
 //	}
 //	fileInfo, e := file.Stat()
 //	if e != nil {
-//		// todo logger
 //		return nil, e
 //	}
 //	mmapData, e := syscall.Mmap()
