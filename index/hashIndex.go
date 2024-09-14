@@ -21,7 +21,7 @@ type HashIndex struct {
 	syncDuration   time.Duration
 }
 
-// BuildHashIndex 给定当前活跃文件和归档文件 重新构建索引 该方法只会在数据库启动时被调用 如果不存在旧的文件 则新建一个活跃文件
+// BuildHashIndex 给定当前活跃文件和归档文件 重新构建Hash类型的索引 该方法只会在数据库启动时被调用 如果不存在旧的文件 则新建一个活跃文件
 func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, fileIOMode storage.FileIOType, baseFolderPath string, fileMaxSize int64, syncDuration time.Duration) (*HashIndex, error) {
 	result := &HashIndex{
 		activeFile:     activeFile,
@@ -79,6 +79,7 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 	return result, nil
 }
 
+// CloseIndex 关闭Hash索引 同时停止定时Sync 关闭文件
 func (hi *HashIndex) CloseIndex() error {
 	hi.mutex.Lock()
 	defer hi.mutex.Unlock()
@@ -143,14 +144,14 @@ func (hi *HashIndex) HSetNX(key string, field string, value string, expiredAt in
 	}
 }
 
-// HGet 根据给定的key和field获取尝试value
+// HGet 根据给定的key和field尝试获取value
 func (hi *HashIndex) HGet(key string, field string) (string, error) {
 	hi.mutex.RLock()
-	defer hi.mutex.RUnlock()
 
 	_, ok := hi.index[key]
 	if ok != true {
 		logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), key, field)
+		hi.mutex.RUnlock()
 		return "", logger.KeyIsNotExisted
 	}
 
@@ -164,10 +165,14 @@ func (hi *HashIndex) HGet(key string, field string) (string, error) {
 	if indexNode.expiredAt < time.Now().Unix() && indexNode.expiredAt != -1 {
 		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + " {" + field + ": " + string(indexNode.value) + "}")
 		// 读取的Entry过期 删索引
+		hi.mutex.RUnlock()
+		hi.mutex.Lock()
 		delete(hi.index[key], field)
+		hi.mutex.Unlock()
 		return "", logger.ValueIsExpired
 	}
 
+	hi.mutex.RUnlock()
 	return string(indexNode.value), nil
 }
 
@@ -283,14 +288,10 @@ func (hi *HashIndex) writeEntry(entry *storage.Entry) (int64, error) {
 	} else if e != nil {
 		return 0, e
 	}
-	//e = hi.activeFile.Sync()
-	//if e != nil {
-	//	return 0, e
-	//}
 	return offset, nil
 }
 
-// handleEntry 接收Entry 并且写入索引
+// handleEntry 接收Entry 并且写入Hash索引
 // attention 它只对索引进行操作
 func (hi *HashIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int64) error {
 

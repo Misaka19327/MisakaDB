@@ -4,27 +4,38 @@ import (
 	"MisakaDB/index"
 	"MisakaDB/logger"
 	"MisakaDB/storage"
+	"MisakaDB/util"
 	"errors"
+	"fmt"
 	"github.com/tidwall/redcon"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // 以下为可选配置项
 const (
-	MisakaDataBaseFolderPath = "D:\\MisakaDBTest"
-	RecordFileMaxSize        = 65536
-	RecordFileIOMode         = storage.TraditionalIOFile
-	MisakaServerAddr         = ":23456"
-	LoggerPath               = "D:\\MisakaDBLog"
-	SyncDuration             = 1000 // 单位为毫秒
+	MisakaDataBaseFolderPath = "D:\\MisakaDBTest"        // 数据库进行数据持久化时 文件的保存位置 注意该路径下不可以有其他人任何文件
+	RecordFileMaxSize        = 65536                     // 文件的最大存储字节数
+	RecordFileIOMode         = storage.TraditionalIOFile // 对文件的读写方式 可以是传统的IO 也可以是Mmap
+	MisakaServerAddr         = ":23456"                  // 数据库的端口
+	LoggerPath               = "D:\\MisakaDBLog"         // 数据库的Log保存位置 该位置下有无其它文件都可以
+	SyncDuration             = 1000                      // 持久化文件定时同步的时间间隔 单位为毫秒
 )
+
+// 下面这是Linux版的路径 方便我切换
+//const (
+//	MisakaDataBaseFolderPath = "/home/MisakaDB"
+//	LoggerPath               = "/home/MisakaDBLog"
+//)
 
 type MisakaDataBase struct {
 	server *redcon.Server
 	logger *logger.Logger
 
-	hashIndex *index.HashIndex
+	hashIndex   *index.HashIndex
+	stringIndex *index.StringIndex
 }
 
 func Init() (*MisakaDataBase, error) {
@@ -53,17 +64,39 @@ func Init() (*MisakaDataBase, error) {
 			}
 			logger.GenerateInfoLog("Hash Index is Ready!")
 		}
+
+		if key == storage.String {
+			database.stringIndex, e = index.BuildStringIndex(value, archiveFiles[storage.String], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+			if e != nil {
+				return nil, e
+			}
+			logger.GenerateInfoLog("String Index is Ready!")
+		}
 	}
 
 	// 开始检查索引是否构建 如果否 构建一个空的索引
 	// 这是防activeFiles本身
 	if database.hashIndex == nil {
 		database.hashIndex, e = index.BuildHashIndex(nil, nil, RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+		if e != nil {
+			logger.GenerateErrorLog(false, false, e.Error(), "Build Empty Hash Index Failed!")
+			return nil, e
+		}
+		logger.GenerateInfoLog("Hash Index is Ready!")
+	}
+	if database.stringIndex == nil {
+		database.stringIndex, e = index.BuildStringIndex(nil, nil, RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+		if e != nil {
+			logger.GenerateErrorLog(false, false, e.Error(), "Build Empty String Index Failed!")
+			return nil, e
+		}
+		logger.GenerateInfoLog("String Index is Ready!")
 	}
 
 	// 初始化服务器
 	e = database.ServerInit()
 	if e != nil {
+		logger.GenerateErrorLog(false, false, e.Error(), "Server Init Failed!")
 		return nil, e
 	}
 	logger.GenerateInfoLog("Server is Ready!")
@@ -80,8 +113,12 @@ func (db *MisakaDataBase) Destroy() error {
 		return e
 	}
 
-	// 关闭索引 索引里会关闭文件的
+	// 关闭索引 索引里会挨个关闭文件的
 	e = db.hashIndex.CloseIndex()
+	if e != nil {
+		return e
+	}
+	e = db.stringIndex.CloseIndex()
 	if e != nil {
 		return e
 	}
@@ -99,32 +136,223 @@ func (db *MisakaDataBase) ServerInit() error {
 	// 1 通过连接接收请求时调用的函数
 	// 2 接受连接时调用的函数
 	// 3 断开连接时调用的函数
-	var e error
+	var (
+		e       error
+		expired int
+	)
 	db.server = redcon.NewServer(MisakaServerAddr,
 		func(conn redcon.Conn, cmd redcon.Command) {
+
+			// 捕捉panic
+			defer func() {
+				p := recover()
+				if p != nil {
+					stackTrace := debug.Stack() // 获取引发panic位置的堆栈信息
+					logger.GenerateErrorLog(true, false, string(stackTrace), fmt.Sprintf("%v", p))
+				}
+				return
+			}()
+
+			logger.GenerateInfoLog(conn.RemoteAddr() + ": Query Command: " + util.TurnByteArray2ToString(cmd.Args))
+
 			switch strings.ToLower(string(cmd.Args[0])) {
 			default:
 				// 命令不能识别
-				conn.WriteError("ERR unknown command '" + string(cmd.Args[0]) + "'")
+				conn.WriteError("ERR unknown command '" + util.TurnByteArray2ToString(cmd.Args) + "'")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Unknown Query: " + util.TurnByteArray2ToString(cmd.Args))
+				return
 			case "ping":
 				conn.WriteString("PONG")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: ping")
+				return
 			case "quit":
 				conn.WriteString("OK")
 				e = conn.Close()
 				if e != nil {
 					logger.GenerateErrorLog(false, false, e.Error())
 				}
-			//case "set":
-			//	if len(cmd.Args) != 3 {
-			//		conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
-			//		return
-			//	} else  {
-			//
-			//	}
+				return
+
+			// string部分的命令解析
+			case "set":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: set")
+				if len(cmd.Args) == 3 {
+					// set key value
+					e = db.stringIndex.Set(string(cmd.Args[1]), string(cmd.Args[2]), -1)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+				} else if len(cmd.Args) == 5 {
+					// set key value expired time
+					expired, e = strconv.Atoi(string(cmd.Args[4]))
+					if e != nil {
+						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
+						return
+					}
+					var expiredAt int64 // todo 过期时间无法设置这个bug只修了string的 别的没修呢 记得下次修
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[3]), expired)
+					if e != nil {
+						conn.WriteError(e.Error() + string(cmd.Args[3]))
+						return
+					}
+					e = db.stringIndex.Set(string(cmd.Args[1]), string(cmd.Args[2]), expiredAt)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "setnx":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: setnx")
+				if len(cmd.Args) == 3 {
+					// setnx key value
+					e = db.stringIndex.SetNX(string(cmd.Args[1]), string(cmd.Args[2]), -1)
+					if e != nil {
+						if errors.Is(logger.KeyIsExisted, e) {
+							conn.WriteInt(0)
+							return
+						} else {
+							conn.WriteError(e.Error())
+							return
+						}
+					}
+					conn.WriteInt(1)
+				} else if len(cmd.Args) == 5 {
+					// setnx key value expired time
+					expired, e = strconv.Atoi(string(cmd.Args[4]))
+					if e != nil {
+						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
+						return
+					}
+					e = db.stringIndex.SetNX(string(cmd.Args[1]), string(cmd.Args[2]), int64(expired))
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "get":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: get")
+				if len(cmd.Args) == 2 {
+					// get key
+					var result string
+					result, e = db.stringIndex.Get(string(cmd.Args[1]))
+					if errors.Is(logger.KeyIsNotExisted, e) {
+						conn.WriteString("nil")
+						return
+					} else if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(result)
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "getrange":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: getrange")
+				if len(cmd.Args) == 4 {
+					// getrange key start end
+					var (
+						result string
+						start  int
+						end    int
+					)
+					start, e = strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Start As Number: " + e.Error())
+						return
+					}
+					end, e = strconv.Atoi(string(cmd.Args[3]))
+					if e != nil {
+						conn.WriteError("Cannot Read End As Number: " + e.Error())
+						return
+					}
+					result, e = db.stringIndex.GetRange(string(cmd.Args[1]), start, end)
+					if errors.Is(logger.KeyIsNotExisted, e) {
+						conn.WriteString("nil")
+					} else if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(result)
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "getset":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: getset")
+				if len(cmd.Args) == 3 {
+					// getset key value
+					var result string
+					result, e = db.stringIndex.GetSet(string(cmd.Args[1]), string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(result)
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "append":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: append")
+				if len(cmd.Args) == 3 {
+					// append key appendValue
+					e = db.stringIndex.Append(string(cmd.Args[1]), string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteInt(len(cmd.Args[2]))
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "del":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: del")
+				if len(cmd.Args) == 2 {
+					// del key
+					e = db.stringIndex.Del(string(cmd.Args[1]))
+					if e != nil {
+						if errors.Is(logger.KeyIsNotExisted, e) {
+							conn.WriteInt(0)
+						} else {
+							conn.WriteError(e.Error())
+						}
+						return
+					}
+					conn.WriteInt(1)
+					return
+				} else {
+					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
 
 			// hash部分的命令解析
 			case "hset":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hset")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hset")
 				if len(cmd.Args) == 4 {
 					// hset key field value
 					e = db.hashIndex.HSet(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), -1)
@@ -143,7 +371,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hsetnx":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hsetnx")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hsetnx")
 				if len(cmd.Args) == 4 {
 					// hset key field value
 					e = db.hashIndex.HSetNX(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), -1)
@@ -162,7 +390,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hget":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hget")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hget")
 				if len(cmd.Args) == 3 {
 					// hget key field
 					var result string
@@ -181,7 +409,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hdel":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hdel")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hdel")
 				if len(cmd.Args) == 3 {
 					// hdel key field
 					e = db.hashIndex.HDel(string(cmd.Args[1]), string(cmd.Args[2]), true)
@@ -206,7 +434,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hlen":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hlen")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hlen")
 				if len(cmd.Args) == 2 {
 					// hlen key
 					var result int
@@ -223,7 +451,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hexists":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hexists")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hexists")
 				if len(cmd.Args) == 2 {
 					// hexists key field
 					var result bool
@@ -244,7 +472,7 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				}
 			case "hstrlen":
-				logger.GenerateInfoLog(conn.RemoteAddr() + " Query: hstrlen")
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hstrlen")
 				if len(cmd.Args) == 2 {
 					// hstrlen key field
 					var result int

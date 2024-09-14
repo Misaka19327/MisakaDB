@@ -11,10 +11,16 @@ var (
 	DecodeKeyAndFieldFailed = errors.New("Decode Key and Field Failed! ")
 
 	FieldIsExisted    = errors.New("Field is Existed! ")
-	KeyIsNotExisted   = errors.New("Key is Not Existed! ")
 	FieldIsNotExisted = errors.New("Field is Not Existed! ")
 
+	KeyIsNotExisted = errors.New("Key is Not Existed! ")
+	KeyIsExisted    = errors.New("Key is Existed! ")
+
 	ValueIsExpired = errors.New("This Value was Expired! ")
+
+	ParameterIsNotAllowed = errors.New("Parameter is Not Allowed! ")
+
+	TimeUnitIsNotSupported = errors.New("Time Unit is Not Supported! ")
 )
 
 // 不准备常驻的错误们

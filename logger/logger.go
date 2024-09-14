@@ -36,7 +36,7 @@ func GenerateInfoLog(message string) {
 	if !ok {
 		log.message = "Can not Get Caller Function, Message: " + message
 	} else {
-		log.message = runtime.FuncForPC(pc).Name() + " :" + message
+		log.message = runtime.FuncForPC(pc).Name() + ": " + message
 	}
 	logInputChannel <- log
 	return
@@ -57,11 +57,11 @@ func GenerateErrorLog(isPanic bool, needStackTrace bool, message string, keyPara
 		log.message += "Stack Trace: \n"
 
 		pcs := make([]uintptr, 100)
-		n := runtime.Callers(1, pcs)
-		pcs = pcs[:n]
-		frames := runtime.CallersFrames(pcs)
+		n := runtime.Callers(1, pcs)         // 获取当前调用堆栈的程序计数器 参数1指定要跳过的堆栈帧数 不包括Callers函数本身 返回的n是实际的程序计数器数量
+		pcs = pcs[:n]                        // 调整切片容量
+		frames := runtime.CallersFrames(pcs) // 获取CallersFrames结构 该结构能够对程序计数器进行迭代
 
-		for frame, more := frames.Next(); more; frame, more = frames.Next() {
+		for frame, more := frames.Next(); more; frame, more = frames.Next() { // 迭代
 			log.message += frame.File + ": " + strconv.Itoa(frame.Line) + ", Function: " + frame.Function + "\n"
 		}
 	} else { // 不需要

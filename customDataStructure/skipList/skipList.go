@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
-	"sync"
+	//"sync"
 	"time"
 )
 
@@ -21,7 +21,7 @@ type (
 		head   *skipListNode // 头节点
 		length uint32        // 跳表当前长度
 		height uint32        // 跳表当前高度 注意这个高度是1的时候 对应的索引是在index[0]
-		mtx    sync.RWMutex  // 读写锁 上并发保护用的
+		//mtx    sync.RWMutex  // 读写锁 上并发保护用的
 	}
 
 	// index 具体的索引 指向节点在某一层的下一个节点
@@ -73,9 +73,9 @@ func (sl *SkipList) ToString() string {
 // internalQueryNode 仅用于内部的查询指定节点的方法 如果存在则返回对应节点 如果不存在则返回空和一个error pass
 func (sl *SkipList) internalQueryNode(key string) (result *skipListNode, err error) {
 
-	// 加读锁
-	sl.mtx.RLock()
-	defer sl.mtx.RUnlock()
+	//// 加读锁
+	//sl.mtx.RLock()
+	//defer sl.mtx.RUnlock()
 
 	// 先找到最高的索引
 	pointer := sl.head
@@ -140,7 +140,7 @@ func (sl *SkipList) QueryNodeInterval(key1 string, key2 string) (values []any, e
 	}
 	values = append(values, node1.value)
 
-	sl.mtx.RLock()
+	//sl.mtx.RLock()
 
 	node2 := node1.indexLevel[0].nextNode
 	for node2 != nil { // 在找终点的过程中顺便添加值
@@ -156,7 +156,7 @@ func (sl *SkipList) QueryNodeInterval(key1 string, key2 string) (values []any, e
 		return nil, e
 	}
 	values = append(values, node2.value)
-	sl.mtx.RUnlock()
+	//sl.mtx.RUnlock()
 	return values, nil
 }
 
@@ -174,7 +174,7 @@ func (sl *SkipList) SetNode(key string, value any) (err error) {
 // DeleteNode 删除指定节点 pass
 func (sl *SkipList) DeleteNode(key string) (err error) {
 
-	sl.mtx.RLock()
+	//sl.mtx.RLock()
 
 	update := make([]*index, sl.height)         // 存储要修改的各层索引
 	for i := uint32(0); i <= sl.height-1; i++ { // 开始寻找各层的指向要删除的节点的索引 从最底层找起
@@ -185,7 +185,7 @@ func (sl *SkipList) DeleteNode(key string) (err error) {
 		if i == 0 { // 只有在最下面的索引才能检查该元素是否存在
 			if pointer.nextNode == nil || pointer.nextNode.key != key {
 				err = errors.New("Delete Key: " + key + " is not Existed! \n")
-				sl.mtx.RUnlock()
+				//sl.mtx.RUnlock()
 				return
 			}
 		}
@@ -195,8 +195,8 @@ func (sl *SkipList) DeleteNode(key string) (err error) {
 	}
 	deleteNode := update[0].nextNode // 具体要删除的节点
 
-	sl.mtx.RUnlock() // 寻找节点完成 开始删除
-	sl.mtx.Lock()
+	//sl.mtx.RUnlock() // 寻找节点完成 开始删除
+	//sl.mtx.Lock()
 
 	for i, v := range update {
 		if v == nil {
@@ -215,12 +215,12 @@ func (sl *SkipList) DeleteNode(key string) (err error) {
 			}
 		}
 	}
-	sl.mtx.Unlock()
+	//sl.mtx.Unlock()
 
 	return
 }
 
-// AddNode 向跳表中添加节点 节点键值不允许相同 pass
+// AddNode 向跳表中添加节点 节点键值相同则为更新节点值 pass
 func (sl *SkipList) AddNode(key string, value any) (err error) {
 
 	// 准备阶段
@@ -234,7 +234,7 @@ func (sl *SkipList) AddNode(key string, value any) (err error) {
 	pointer := sl.head
 
 	// 确定update 确定每层索引插入位置
-	sl.mtx.RLock()
+	//sl.mtx.RLock()
 	for i := range update {
 		pointer = sl.head
 		for pointer.indexLevel[i].nextNode != nil {
@@ -242,7 +242,8 @@ func (sl *SkipList) AddNode(key string, value any) (err error) {
 				update[i] = &pointer.indexLevel[i]
 				break
 			} else if strings.Compare(key, pointer.indexLevel[i].nextNode.key) == 0 { // 如果结果为0 说明s1 == s2
-				return errors.New("Add Key: " + key + " is Existed! \n")
+				pointer.indexLevel[i].nextNode.value = value
+				return nil
 			}
 			pointer = pointer.indexLevel[i].nextNode
 		}
@@ -250,10 +251,10 @@ func (sl *SkipList) AddNode(key string, value any) (err error) {
 			update[i] = &pointer.indexLevel[i]
 		}
 	}
-	sl.mtx.RUnlock()
+	//sl.mtx.RUnlock()
 
 	// 开始插入
-	sl.mtx.Lock()
+	//sl.mtx.Lock()
 	for i := range update {
 		pointer = update[i].nextNode
 		update[i].nextNode = newNode
@@ -263,7 +264,7 @@ func (sl *SkipList) AddNode(key string, value any) (err error) {
 		sl.height = uint32(indexHeight)
 	}
 	sl.length += 1
-	sl.mtx.Unlock()
+	//sl.mtx.Unlock()
 
 	return nil
 }

@@ -4,6 +4,8 @@ import (
 	"MisakaDB/logger"
 	"encoding/binary"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // EncodeKeyAndField 为了Hash等类型提供 将Key和Field编码在一起形成一个新的Key
@@ -48,4 +50,24 @@ func TurnByteArrayToString(input []byte) string {
 		result += strconv.Itoa(int(v)) + " "
 	}
 	return result
+}
+
+// TurnByteArray2ToString 将byte二维数组转换为string
+func TurnByteArray2ToString(input [][]byte) string {
+	var result []string
+	for _, v := range input {
+		result = append(result, string(v))
+	}
+	return strings.Join(result, " ")
+}
+
+// CalcTimeUnix 根据传入的单位和具体的数值 计算过期时间戳 单位支持ex - 秒和px - 毫秒两种
+func CalcTimeUnix(unit string, t int) (int64, error) {
+	switch unit {
+	case "ex":
+		return time.Now().Add(time.Duration(t) * time.Second).UnixMilli(), nil
+	case "px":
+		return time.Now().Add(time.Duration(t) * time.Millisecond).UnixMilli(), nil
+	}
+	return 0, logger.TimeUnitIsNotSupported
 }
