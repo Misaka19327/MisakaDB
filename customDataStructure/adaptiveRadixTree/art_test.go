@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"math/rand"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"testing"
 	"time"
@@ -454,6 +455,14 @@ func (t *test2) String() string {
 }
 
 func TestDict(t *testing.T) {
+	//f, _ := os.OpenFile("cpu.profile", os.O_CREATE|os.O_RDWR, 0644)
+	//defer f.Close()
+	//pprof.StartCPUProfile(f)
+	//defer pprof.StopCPUProfile()
+
+	f, _ := os.OpenFile("mem.profile", os.O_CREATE|os.O_RDWR, 0644)
+	defer f.Close()
+
 	words := loadTestFile("testWord/words.txt")
 	tr := New[*test2]()
 	//words = words[:233000]
@@ -500,6 +509,7 @@ func TestDict(t *testing.T) {
 	}
 	t.Log("delete error count: " + strconv.Itoa(count))
 	t.Log("tree size: " + strconv.Itoa(tr.Size()))
+	pprof.Lookup("heap").WriteTo(f, 0)
 	//str = tr.(*tree[*test2]).String()
 	//t.Log(str[:6230])
 }

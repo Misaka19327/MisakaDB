@@ -1,6 +1,8 @@
 package adaptiveRadixTree
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 func newNode4[T Value]() *artNode[T] {
 	return &artNode[T]{
