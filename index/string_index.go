@@ -1,7 +1,7 @@
 package index
 
 import (
-	"MisakaDB/customDataStructure/skipList"
+	"MisakaDB/customDataStructure/adaptiveRadixTree"
 	"MisakaDB/logger"
 	"MisakaDB/storage"
 	"errors"
@@ -10,7 +10,7 @@ import (
 )
 
 type StringIndex struct {
-	index        *skipList.SkipList
+	index        adaptiveRadixTree.Tree[*indexNode]
 	mutex        sync.RWMutex
 	activeFile   *storage.RecordFile
 	archivedFile map[uint32]*storage.RecordFile
@@ -25,7 +25,7 @@ type StringIndex struct {
 func BuildStringIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*storage.RecordFile, fileIOMode storage.FileIOType, baseFolderPath string, fileMaxSize int64, syncDuration time.Duration) (*StringIndex, error) {
 
 	result := &StringIndex{
-		index:          skipList.NewSkipList(),
+		index:          adaptiveRadixTree.New[*indexNode](),
 		activeFile:     activeFile,
 		archivedFile:   archivedFile,
 		fileIOMode:     fileIOMode,
@@ -100,14 +100,14 @@ func (si *StringIndex) CloseIndex() error {
 }
 
 // Set 给定key和value 设定值 如果key存在则为更新值
-func (si *StringIndex) Set(key string, value string, expiredAt int64) error {
+func (si *StringIndex) Set(key []byte, value []byte, expiredAt int64) error {
 	entry := &storage.Entry{
 		EntryType: storage.TypeRecord,
 		ExpiredAt: expiredAt,
-		Key:       []byte(key),
-		Value:     []byte(value),
+		Key:       key,
+		Value:     value,
 	}
-	indexNode := &IndexNode{
+	indexN := &indexNode{
 		expiredAt: expiredAt,
 	}
 
@@ -119,52 +119,48 @@ func (si *StringIndex) Set(key string, value string, expiredAt int64) error {
 	if e != nil {
 		return e
 	}
-	indexNode.offset = offset
-	indexNode.fileID = si.activeFile.GetFileID()
-	indexNode.value = []byte(value)
+	indexN.offset = offset
+	indexN.fileID = si.activeFile.GetFileID()
+	indexN.value = value
 
 	// 写入索引
-	e = si.index.AddNode(key, indexNode)
-	if e != nil {
-
-	}
+	_, _ = si.index.Insert(key, indexN)
 	return nil
 }
 
 // Get 根据给定的key尝试获取value
-func (si *StringIndex) Get(key string) (string, error) {
+func (si *StringIndex) Get(key []byte) (string, error) {
 
 	si.mutex.RLock()
 
-	value, e := si.index.QueryNode(key)
-	if e != nil {
+	value, isFound := si.index.Search(key)
+	if !isFound {
 		si.mutex.RUnlock()
 		return "", logger.KeyIsNotExisted
 	}
-	indexNode := assertIndexNodePointer(value)
 
 	// 如果过期时间为-1则说明永不过期
-	if indexNode.expiredAt < time.Now().UnixMilli() && indexNode.expiredAt != -1 {
-		// todo 时间戳错误的使用了秒为单位 只修了这里和util里的 别的地方没看 记得下次全部修正为毫秒的
-		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + key)
+	if value.expiredAt < time.Now().UnixMilli() && value.expiredAt != -1 {
+		// 存储的时间戳全部统一使用毫秒为单位
+		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + string(key))
 		// 读取的Entry过期 删索引
 		si.mutex.RUnlock()
 		si.mutex.Lock()
-		e = si.index.DeleteNode(key)
+		_, isDeleted := si.index.Delete(key)
 		si.mutex.Unlock()
-		if e != nil {
-			logger.GenerateErrorLog(false, false, e.Error(), si.index.ToString(), key)
-			return "", e
+		if !isDeleted {
+			logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), string(key))
+			return "", logger.KeyIsNotExisted
 		}
 		return "", logger.ValueIsExpired
 	}
 
 	si.mutex.RUnlock()
-	return string(indexNode.value), nil
+	return string(value.value), nil
 }
 
 // GetRange 返回key中字符串值的子字符
-func (si *StringIndex) GetRange(key string, start int, end int) (string, error) {
+func (si *StringIndex) GetRange(key []byte, start int, end int) (string, error) {
 	if start > end {
 		return "", logger.ParameterIsNotAllowed
 	}
@@ -176,29 +172,28 @@ func (si *StringIndex) GetRange(key string, start int, end int) (string, error) 
 }
 
 // GetSet 先按key获取旧的值 然后再设置新的值并且返回旧值
-func (si *StringIndex) GetSet(key string, newValue string) (string, error) {
+func (si *StringIndex) GetSet(key []byte, newValue []byte) (string, error) {
 
 	si.mutex.RLock()
-
+	var isOperationSuccess bool
 	// 先尝试Get
-	value, e := si.index.QueryNode(key)
-	if e != nil {
-		logger.GenerateErrorLog(false, false, e.Error(), key)
-		return "", e
+	value, isOperationSuccess := si.index.Search(key)
+	if !isOperationSuccess {
+		logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), string(key))
+		return "", logger.KeyIsNotExisted
 	}
-	indexNode := assertIndexNodePointer(value)
 
 	// 如果过期时间为-1则说明永不过期
-	if indexNode.expiredAt < time.Now().Unix() && indexNode.expiredAt != -1 {
-		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + key)
+	if value.expiredAt < time.Now().UnixMilli() && value.expiredAt != -1 {
+		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + string(key))
 		// 读取的Entry过期 删索引
 		si.mutex.RUnlock()
 		si.mutex.Lock()
-		e = si.index.DeleteNode(key)
+		_, isOperationSuccess = si.index.Delete(key)
 		si.mutex.Unlock()
-		if e != nil {
-			logger.GenerateErrorLog(false, false, e.Error(), si.index.ToString(), key)
-			return "", e
+		if !isOperationSuccess {
+			logger.GenerateErrorLog(false, false, logger.KeyIsNotExisted.Error(), string(key))
+			return "", logger.KeyIsNotExisted
 		}
 		return "", logger.ValueIsExpired
 	}
@@ -207,11 +202,11 @@ func (si *StringIndex) GetSet(key string, newValue string) (string, error) {
 
 	entry := &storage.Entry{
 		EntryType: storage.TypeRecord,
-		ExpiredAt: indexNode.expiredAt,
-		Key:       []byte(key),
-		Value:     []byte(newValue),
+		ExpiredAt: value.expiredAt,
+		Key:       key,
+		Value:     newValue,
 	}
-	oldValue := string(indexNode.value)
+	oldValue := string(value.value)
 
 	// 再尝试Set
 	si.mutex.Lock()
@@ -222,9 +217,9 @@ func (si *StringIndex) GetSet(key string, newValue string) (string, error) {
 		return "", e
 	}
 	// 再更新indexNode
-	indexNode.value = []byte(newValue)
-	indexNode.offset = offset
-	indexNode.fileID = si.activeFile.GetFileID()
+	value.value = newValue
+	value.offset = offset
+	value.fileID = si.activeFile.GetFileID()
 
 	si.mutex.Unlock()
 
@@ -233,7 +228,7 @@ func (si *StringIndex) GetSet(key string, newValue string) (string, error) {
 }
 
 // SetNX 只有在key不存在时设置key的值
-func (si *StringIndex) SetNX(key string, value string, expiredAt int64) error {
+func (si *StringIndex) SetNX(key []byte, value []byte, expiredAt int64) error {
 	_, e := si.Get(key)
 	if e != nil {
 		return si.Set(key, value, expiredAt)
@@ -243,23 +238,22 @@ func (si *StringIndex) SetNX(key string, value string, expiredAt int64) error {
 }
 
 // Append 在key存在的情况下 向其已经存在的value追加一个字符串
-func (si *StringIndex) Append(key string, appendValue string) error {
-
+func (si *StringIndex) Append(key []byte, appendValue []byte) error {
+	var isOperationSuccess bool
 	si.mutex.RLock()
-	value, e := si.index.QueryNode(key)
-	if e != nil {
+	value, isOperationSuccess := si.index.Search(key)
+	if !isOperationSuccess {
 		si.mutex.RUnlock()
 		return logger.KeyIsNotExisted
 	}
-	indexNode := assertIndexNodePointer(value)
 
 	si.mutex.RUnlock()
 
 	entry := &storage.Entry{
 		EntryType: storage.TypeRecord,
-		ExpiredAt: indexNode.expiredAt,
-		Key:       []byte(key),
-		Value:     append(indexNode.value, []byte(appendValue)...),
+		ExpiredAt: value.expiredAt,
+		Key:       key,
+		Value:     append(value.value, appendValue...),
 	}
 
 	// 再尝试Set
@@ -271,40 +265,35 @@ func (si *StringIndex) Append(key string, appendValue string) error {
 		return e
 	}
 	// 再更新indexNode
-	indexNode.value = append(indexNode.value, []byte(appendValue)...)
-	indexNode.offset = offset
-	indexNode.fileID = si.activeFile.GetFileID()
+	value.value = append(value.value, appendValue...)
+	value.offset = offset
+	value.fileID = si.activeFile.GetFileID()
 
 	si.mutex.Unlock()
 	return nil
 }
 
 // Del 如果key存在 则删除key对应的value
-func (si *StringIndex) Del(key string) error {
+func (si *StringIndex) Del(key []byte) error {
+	var isOperationSuccess bool
 	si.mutex.RLock()
-	value, e := si.index.QueryNode(key)
-	if e != nil {
+	value, isOperationSuccess := si.index.Delete(key)
+	if !isOperationSuccess {
 		si.mutex.RUnlock()
 		return logger.KeyIsNotExisted
 	}
-	indexNode := assertIndexNodePointer(value)
 	si.mutex.RUnlock()
 
 	entry := &storage.Entry{
 		EntryType: storage.TypeDelete,
-		Key:       []byte(key),
-		Value:     indexNode.value,
+		Key:       key,
+		Value:     value.value,
 		ExpiredAt: 0,
 	}
 
 	si.mutex.Lock()
-	_, e = si.writeEntry(entry)
+	_, e := si.writeEntry(entry)
 	if e != nil {
-		return e
-	}
-	e = si.index.DeleteNode(key)
-	if e != nil {
-		logger.GenerateErrorLog(false, false, e.Error(), key)
 		return e
 	}
 	si.mutex.Unlock()
@@ -342,7 +331,6 @@ func (si *StringIndex) writeEntry(entry *storage.Entry) (int64, error) {
 
 // handleEntry 接收Entry 并且写入String索引 注意它只对索引进行操作
 func (si *StringIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int64) error {
-	var e error
 
 	si.mutex.Lock()
 	defer si.mutex.Unlock()
@@ -350,30 +338,23 @@ func (si *StringIndex) handleEntry(entry *storage.Entry, fileID uint32, offset i
 	switch entry.EntryType {
 	case storage.TypeDelete:
 		{
-			e = si.index.DeleteNode(string(entry.Key))
-			if e != nil {
-				logger.GenerateErrorLog(false, false, e.Error(), si.index.ToString(), string(entry.Key), string(entry.Value))
-			}
+			_, _ = si.index.Delete(entry.Key)
 		}
 	case storage.TypeRecord:
 
-		// 这里之所以只对RecordEntry进行检查 是因为对map的delete函数 如果传入的map本身就是空或者要删除的键找不到值 它就直接返回了 并不会报错
-		// 所以DeleteEntry不需要过期检查 过期就过期吧 过期了也只是no-op而已
+		// DeleteEntry 不需要过期检查的原因和 HashIndex 的原因相近
 		// 如果过期时间为-1则说明永不过期
-		if entry.ExpiredAt < time.Now().Unix() && entry.ExpiredAt != -1 {
+		if entry.ExpiredAt < time.Now().UnixMilli() && entry.ExpiredAt != -1 {
 			// attention 过期logger
 			return nil
 		}
 
-		e = si.index.AddNode(string(entry.Key), &IndexNode{
+		_, _ = si.index.Insert(entry.Key, &indexNode{
 			value:     entry.Value,
 			expiredAt: entry.ExpiredAt,
 			fileID:    fileID,
 			offset:    offset,
 		})
-		if e != nil {
-			logger.GenerateErrorLog(false, false, e.Error(), si.index.ToString(), string(entry.Key), string(entry.Value))
-		}
 	}
 	return nil
 }

@@ -178,14 +178,14 @@ func (db *MisakaDataBase) ServerInit() error {
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: set")
 				if len(cmd.Args) == 3 {
 					// set key value
-					e = db.stringIndex.Set(string(cmd.Args[1]), string(cmd.Args[2]), -1)
+					e = db.stringIndex.Set(cmd.Args[1], cmd.Args[2], -1)
 					if e != nil {
 						conn.WriteError(e.Error())
 						return
 					}
 					conn.WriteString("OK")
 				} else if len(cmd.Args) == 5 {
-					// set key value expired time
+					// set key value ex/px time
 					expired, e = strconv.Atoi(string(cmd.Args[4]))
 					if e != nil {
 						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
@@ -197,7 +197,7 @@ func (db *MisakaDataBase) ServerInit() error {
 						conn.WriteError(e.Error() + string(cmd.Args[3]))
 						return
 					}
-					e = db.stringIndex.Set(string(cmd.Args[1]), string(cmd.Args[2]), expiredAt)
+					e = db.stringIndex.Set(cmd.Args[1], cmd.Args[2], expiredAt)
 					if e != nil {
 						conn.WriteError(e.Error())
 						return
@@ -213,7 +213,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: setnx")
 				if len(cmd.Args) == 3 {
 					// setnx key value
-					e = db.stringIndex.SetNX(string(cmd.Args[1]), string(cmd.Args[2]), -1)
+					e = db.stringIndex.SetNX(cmd.Args[1], cmd.Args[2], -1)
 					if e != nil {
 						if errors.Is(logger.KeyIsExisted, e) {
 							conn.WriteInt(0)
@@ -225,13 +225,19 @@ func (db *MisakaDataBase) ServerInit() error {
 					}
 					conn.WriteInt(1)
 				} else if len(cmd.Args) == 5 {
-					// setnx key value expired time
+					// setnx key value ex/px time
 					expired, e = strconv.Atoi(string(cmd.Args[4]))
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[3]), expired)
+					if e != nil {
+						conn.WriteError(e.Error() + string(cmd.Args[3]))
+						return
+					}
 					if e != nil {
 						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
 						return
 					}
-					e = db.stringIndex.SetNX(string(cmd.Args[1]), string(cmd.Args[2]), int64(expired))
+					e = db.stringIndex.SetNX(cmd.Args[1], cmd.Args[2], expiredAt)
 					if e != nil {
 						conn.WriteError(e.Error())
 						return
@@ -248,7 +254,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				if len(cmd.Args) == 2 {
 					// get key
 					var result string
-					result, e = db.stringIndex.Get(string(cmd.Args[1]))
+					result, e = db.stringIndex.Get(cmd.Args[1])
 					if errors.Is(logger.KeyIsNotExisted, e) {
 						conn.WriteString("nil")
 						return
@@ -282,7 +288,7 @@ func (db *MisakaDataBase) ServerInit() error {
 						conn.WriteError("Cannot Read End As Number: " + e.Error())
 						return
 					}
-					result, e = db.stringIndex.GetRange(string(cmd.Args[1]), start, end)
+					result, e = db.stringIndex.GetRange(cmd.Args[1], start, end)
 					if errors.Is(logger.KeyIsNotExisted, e) {
 						conn.WriteString("nil")
 					} else if e != nil {
@@ -301,7 +307,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				if len(cmd.Args) == 3 {
 					// getset key value
 					var result string
-					result, e = db.stringIndex.GetSet(string(cmd.Args[1]), string(cmd.Args[2]))
+					result, e = db.stringIndex.GetSet(cmd.Args[1], cmd.Args[2])
 					if e != nil {
 						conn.WriteError(e.Error())
 						return
@@ -317,7 +323,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: append")
 				if len(cmd.Args) == 3 {
 					// append key appendValue
-					e = db.stringIndex.Append(string(cmd.Args[1]), string(cmd.Args[2]))
+					e = db.stringIndex.Append(cmd.Args[1], cmd.Args[2])
 					if e != nil {
 						conn.WriteError(e.Error())
 						return
@@ -333,7 +339,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: del")
 				if len(cmd.Args) == 2 {
 					// del key
-					e = db.stringIndex.Del(string(cmd.Args[1]))
+					e = db.stringIndex.Del(cmd.Args[1])
 					if e != nil {
 						if errors.Is(logger.KeyIsNotExisted, e) {
 							conn.WriteInt(0)
@@ -363,8 +369,16 @@ func (db *MisakaDataBase) ServerInit() error {
 					conn.WriteString("OK")
 					return
 				} else if len(cmd.Args) == 6 {
+					// hset key field value ex/px time
 					// 设置过期时间
-					// todo
+					expired, e = strconv.Atoi(string(cmd.Args[5]))
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[4]), expired)
+					if e != nil {
+						conn.WriteError(e.Error() + string(cmd.Args[4]))
+						return
+					}
+					e = db.hashIndex.HSet(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), expiredAt)
 				} else {
 					// 参数数量错误
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
@@ -382,8 +396,16 @@ func (db *MisakaDataBase) ServerInit() error {
 					conn.WriteString("OK")
 					return
 				} else if len(cmd.Args) == 6 {
+					// hsetnx key field value ex/px time
 					// 设置过期时间
-					// todo
+					expired, e = strconv.Atoi(string(cmd.Args[5]))
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[4]), expired)
+					if e != nil {
+						conn.WriteError(e.Error() + string(cmd.Args[4]))
+						return
+					}
+					e = db.hashIndex.HSetNX(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), expiredAt)
 				} else {
 					// 参数数量错误
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")

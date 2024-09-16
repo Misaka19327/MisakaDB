@@ -10,7 +10,7 @@ import (
 )
 
 type HashIndex struct {
-	index        map[string]map[string]*IndexNode
+	index        map[string]map[string]*indexNode
 	mutex        sync.RWMutex
 	activeFile   *storage.RecordFile
 	archivedFile map[uint32]*storage.RecordFile
@@ -29,7 +29,7 @@ func BuildHashIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*sto
 		fileIOMode:     fileIOMode,
 		baseFolderPath: baseFolderPath,
 		fileMaxSize:    fileMaxSize,
-		index:          make(map[string]map[string]*IndexNode),
+		index:          make(map[string]map[string]*indexNode),
 		syncDuration:   syncDuration,
 	}
 
@@ -103,7 +103,7 @@ func (hi *HashIndex) HSet(key string, field string, value string, expiredAt int6
 		Key:       util.EncodeKeyAndField(key, field),
 		Value:     []byte(value),
 	}
-	indexNode := &IndexNode{
+	indexN := &indexNode{
 		expiredAt: expiredAt,
 	}
 
@@ -115,16 +115,16 @@ func (hi *HashIndex) HSet(key string, field string, value string, expiredAt int6
 	if e != nil {
 		return e
 	}
-	indexNode.offset = offset
-	indexNode.fileID = hi.activeFile.GetFileID()
-	indexNode.value = []byte(value)
+	indexN.offset = offset
+	indexN.fileID = hi.activeFile.GetFileID()
+	indexN.value = []byte(value)
 
 	// 最后写入索引
 	if _, ok := hi.index[key]; ok {
-		hi.index[key][field] = indexNode
+		hi.index[key][field] = indexN
 	} else {
-		hi.index[key] = make(map[string]*IndexNode)
-		hi.index[key][field] = indexNode
+		hi.index[key] = make(map[string]*indexNode)
+		hi.index[key][field] = indexN
 	}
 	return nil
 }
@@ -155,15 +155,15 @@ func (hi *HashIndex) HGet(key string, field string) (string, error) {
 		return "", logger.KeyIsNotExisted
 	}
 
-	indexNode, ok := hi.index[key][field]
+	indexN, ok := hi.index[key][field]
 	if ok != true {
 		logger.GenerateErrorLog(false, false, logger.FieldIsNotExisted.Error(), key, field)
 		return "", logger.FieldIsNotExisted
 	}
 
 	// 如果过期时间为-1则说明永不过期
-	if indexNode.expiredAt < time.Now().Unix() && indexNode.expiredAt != -1 {
-		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + " {" + field + ": " + string(indexNode.value) + "}")
+	if indexN.expiredAt < time.Now().UnixMilli() && indexN.expiredAt != -1 {
+		logger.GenerateInfoLog(logger.ValueIsExpired.Error() + " {" + field + ": " + string(indexN.value) + "}")
 		// 读取的Entry过期 删索引
 		hi.mutex.RUnlock()
 		hi.mutex.Lock()
@@ -173,7 +173,7 @@ func (hi *HashIndex) HGet(key string, field string) (string, error) {
 	}
 
 	hi.mutex.RUnlock()
-	return string(indexNode.value), nil
+	return string(indexN.value), nil
 }
 
 // HDel 根据key和field尝试删除键值对 如果deleteField为true 则认为删的是hash里面的键值对 反之则认为删除的是整个hash
@@ -292,7 +292,8 @@ func (hi *HashIndex) writeEntry(entry *storage.Entry) (int64, error) {
 }
 
 // handleEntry 接收Entry 并且写入Hash索引
-// attention 它只对索引进行操作
+//
+// 它只对索引进行操作
 func (hi *HashIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int64) error {
 
 	key, field, e := util.DecodeKeyAndField(entry.Key)
@@ -314,24 +315,24 @@ func (hi *HashIndex) handleEntry(entry *storage.Entry, fileID uint32, offset int
 		}
 	case storage.TypeRecord:
 
-		// attention 这里之所以只对RecordEntry进行检查 是因为对map的delete函数 如果传入的map本身就是空或者要删除的键找不到值 它就直接返回了 并不会报错
+		// 这里之所以只对RecordEntry进行检查 是因为对map的delete函数 如果传入的map本身就是空或者要删除的键找不到值 它就直接返回了 并不会报错
 		// 所以DeleteEntry不需要过期检查 过期就过期吧 过期了也只是no-op而已
 		// 如果过期时间为-1则说明永不过期
-		if entry.ExpiredAt < time.Now().Unix() && entry.ExpiredAt != -1 {
+		if entry.ExpiredAt < time.Now().UnixMilli() && entry.ExpiredAt != -1 {
 			// attention 过期logger
 			return nil
 		}
 
 		if _, ok := hi.index[key]; ok {
-			hi.index[key][field] = &IndexNode{
+			hi.index[key][field] = &indexNode{
 				value:     entry.Value,
 				expiredAt: entry.ExpiredAt,
 				fileID:    fileID,
 				offset:    offset,
 			}
 		} else {
-			hi.index[key] = make(map[string]*IndexNode)
-			hi.index[key][field] = &IndexNode{
+			hi.index[key] = make(map[string]*indexNode)
+			hi.index[key][field] = &indexNode{
 				value:     entry.Value,
 				expiredAt: entry.ExpiredAt,
 				fileID:    fileID,

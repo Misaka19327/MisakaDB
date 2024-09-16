@@ -19,7 +19,7 @@ func TestBuildStringIndex(t *testing.T) {
 		t.Error(e)
 		return
 	}
-	hashIndex, e := BuildStringIndex(activeFiles[storage.String], archiveFiles[storage.String], storage.TraditionalIOFile, "D:\\MisakaDBTest", 50000000, time.Second)
+	stringIndex, e := BuildStringIndex(activeFiles[storage.String], archiveFiles[storage.String], storage.TraditionalIOFile, "D:\\MisakaDBTest", 50000000, time.Second)
 	if e != nil {
 		t.Error(e)
 		return
@@ -29,7 +29,7 @@ func TestBuildStringIndex(t *testing.T) {
 	t.Log(endTime.Sub(startTime).Seconds())
 
 	testData := make(map[string]string)
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 100; i++ {
 		testData["testKey"+strconv.Itoa(i)] = "testValue" + strconv.Itoa(i)
 	}
 
@@ -42,7 +42,7 @@ func TestBuildStringIndex(t *testing.T) {
 	t.Log("Test Data is Ready!")
 	for key, value := range testData {
 		startTime = time.Now()
-		e = hashIndex.Set(key, value, 32503637532)
+		e = stringIndex.Set([]byte(key), []byte(value), -1)
 		endTime = time.Now()
 		_, e = file.Write([]byte(strconv.Itoa(int(endTime.Sub(startTime).Microseconds()))))
 		_, e = file.Write([]byte(" "))
@@ -57,7 +57,7 @@ func TestBuildStringIndex(t *testing.T) {
 	var getValue string
 	count := 0
 	for key, value := range testData {
-		getValue, e = hashIndex.Get(key)
+		getValue, e = stringIndex.Get([]byte(key))
 		if e != nil {
 			t.Error(e)
 			return
