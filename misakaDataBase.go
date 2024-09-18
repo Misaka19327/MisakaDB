@@ -37,6 +37,7 @@ type MisakaDataBase struct {
 	hashIndex   *index.HashIndex
 	stringIndex *index.StringIndex
 	listIndex   *index.ListIndex
+	zsetIndex   *index.ZSetIndex
 }
 
 func Init() (*MisakaDataBase, error) {
@@ -81,6 +82,14 @@ func Init() (*MisakaDataBase, error) {
 			}
 			logger.GenerateInfoLog("List Index is Ready! ")
 		}
+
+		if key == storage.ZSet {
+			database.zsetIndex, e = index.BuildZSetIndex(value, archiveFiles[storage.ZSet], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+			if e != nil {
+				return nil, e
+			}
+			logger.GenerateInfoLog("ZSet Index is Ready! ")
+		}
 	}
 
 	// 开始检查索引是否构建 如果否 构建一个空的索引
@@ -107,6 +116,13 @@ func Init() (*MisakaDataBase, error) {
 			return nil, e
 		}
 		logger.GenerateInfoLog("List Index is Ready! ")
+	}
+	if database.zsetIndex == nil {
+		database.zsetIndex, e = index.BuildZSetIndex(nil, archiveFiles[storage.ZSet], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+		if e != nil {
+			return nil, e
+		}
+		logger.GenerateInfoLog("ZSet Index is Ready! ")
 	}
 
 	// 初始化服务器
@@ -499,7 +515,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				}
 			case "hexists":
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hexists")
-				if len(cmd.Args) == 2 {
+				if len(cmd.Args) == 3 {
 					// hexists key field
 					var result bool
 					result, e = db.hashIndex.HExist(string(cmd.Args[1]), string(cmd.Args[2]))
@@ -520,7 +536,7 @@ func (db *MisakaDataBase) ServerInit() error {
 				}
 			case "hstrlen":
 				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: hstrlen")
-				if len(cmd.Args) == 2 {
+				if len(cmd.Args) == 3 {
 					// hstrlen key field
 					var result int
 					result, e = db.hashIndex.HStrLen(string(cmd.Args[1]), string(cmd.Args[2]))
@@ -717,6 +733,144 @@ func (db *MisakaDataBase) ServerInit() error {
 						return
 					}
 					result, e := db.listIndex.LRange(cmd.Args[1], start, end)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(util.TurnByteArray2ToString(result))
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+
+			// zset 部分命令解析
+			case "zadd":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 4 {
+					// zadd key score member
+					s, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Score As Number: " + e.Error())
+						return
+					}
+					e = db.zsetIndex.ZAdd(cmd.Args[1], s, cmd.Args[3], -1)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else if len(cmd.Args) == 6 {
+					// zadd key score member ex/px time
+					s, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Score As Number: " + e.Error())
+						return
+					}
+					expired, e = strconv.Atoi(string(cmd.Args[5]))
+					if e != nil {
+						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
+						return
+					}
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[4]), expired)
+					e = db.zsetIndex.ZAdd(cmd.Args[1], s, cmd.Args[3], expiredAt)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "zrem":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 3 {
+					// zrem key member
+					e = db.zsetIndex.ZRem(cmd.Args[1], cmd.Args[2])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "zscore":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 3 {
+					// zscore key member
+					result, e := db.zsetIndex.ZScore(cmd.Args[1], cmd.Args[2])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteInt(result)
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "zcard":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 2 {
+					// zcard key
+					result, e := db.zsetIndex.ZCard(cmd.Args[1])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteInt(result)
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "zcount":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 4 {
+					// zcount key min max
+					minIndex, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Min As Number: " + e.Error())
+						return
+					}
+					maxIndex, e := strconv.Atoi(string(cmd.Args[3]))
+					if e != nil {
+						conn.WriteError("Cannot Read Max As Number: " + e.Error())
+						return
+					}
+					result, e := db.zsetIndex.ZCount(cmd.Args[1], minIndex, maxIndex)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteInt(result)
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "zrange":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 4 {
+					// zrange key min max
+					minIndex, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Min As Number: " + e.Error())
+						return
+					}
+					maxIndex, e := strconv.Atoi(string(cmd.Args[3]))
+					if e != nil {
+						conn.WriteError("Cannot Read Max As Number: " + e.Error())
+						return
+					}
+					result, e := db.zsetIndex.ZRange(cmd.Args[1], minIndex, maxIndex)
 					if e != nil {
 						conn.WriteError(e.Error())
 						return

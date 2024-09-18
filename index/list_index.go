@@ -181,7 +181,7 @@ func (li *ListIndex) delayExpiredMessage(key []byte, expiredNode *indexNode) {
 	}
 }
 
-// CloseIndex 关闭 String 索引 同时停止定时Sync 关闭文件
+// CloseIndex 关闭 List 索引 同时停止定时Sync 关闭文件 关闭内部 channel
 func (li *ListIndex) CloseIndex() (err error) {
 	defer func() {
 		if e := recover(); e != nil {

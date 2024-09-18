@@ -228,6 +228,48 @@ func (sl *SkipList[T]) internalQueryNode(key Comparable) (result *skipListNode[T
 	return
 }
 
+// queryGreaterOrEqualNode 找到第一个大于等于给定的 key 的节点
+func (sl *SkipList[T]) queryGreaterOrEqualNode(key Comparable) (result *skipListNode[T], e error) {
+	pointer := sl.head
+	height := sl.height
+
+	// 从最高的索引开始 一步一步向下开始寻找值
+	var compareResult int
+	for {
+		if pointer.indexLevel[height-1].nextNode == nil { // 如果当前层的索引循环完成仍然找不到值 就尝试使索引下降一个高度
+			if height == 1 {
+				break
+			} else {
+				height -= 1 // 索引已经到最低 无法再下降 说明找不到元素
+				continue
+			}
+		}
+		compareResult = key.Compare(pointer.indexLevel[height-1].nextNode.key)
+		if compareResult < 0 { // key较小 尝试使索引下降一个高度
+			if height == 1 {
+				break
+			} else {
+				height -= 1
+				continue
+			}
+		} else if compareResult > 0 { // key 较大 尝试下降索引 如果没得下降就直接返回
+			if height == 1 {
+				return pointer.indexLevel[height-1].nextNode, nil
+			} else {
+				height -= 1
+				continue
+			}
+		} else {
+			result = pointer.indexLevel[height-1].nextNode
+			e = nil
+			return
+		}
+	}
+	e = errors.New("There is No Node is eligible: \n" + key.String())
+	result = nil
+	return
+}
+
 // QueryNode 跳表的单节点查询方法 返回给定键所对应的值 pass
 func (sl *SkipList[T]) QueryNode(key Comparable) (value T, err error) {
 	result, e := sl.internalQueryNode(key)
@@ -239,7 +281,7 @@ func (sl *SkipList[T]) QueryNode(key Comparable) (value T, err error) {
 	}
 }
 
-// QueryNodeInterval 按给定的key1到key2的范围进行区间查询 返回这个区间（含两侧）内的所有value pass
+// QueryNodeInterval 在[key1, key2]这个范围内进行区间查询 返回这个区间内的所有value pass
 func (sl *SkipList[T]) QueryNodeInterval(key1 Comparable, key2 Comparable) (values []T, err error) {
 	//if strings.Compare(key1, key2) > 0 { key1大于key2时交换 强制key1必须小于key2
 	if key1.Compare(key2) > 0 {
@@ -253,7 +295,7 @@ func (sl *SkipList[T]) QueryNodeInterval(key1 Comparable, key2 Comparable) (valu
 		}
 	}
 
-	node1, e := sl.internalQueryNode(key1) // 先找起点
+	node1, e := sl.queryGreaterOrEqualNode(key1) // 先找起点
 	if e != nil {
 		return nil, e
 	}
@@ -263,18 +305,13 @@ func (sl *SkipList[T]) QueryNodeInterval(key1 Comparable, key2 Comparable) (valu
 
 	node2 := node1.indexLevel[0].nextNode
 	for node2 != nil { // 在找终点的过程中顺便添加值
-		if node2.key.Compare(key2) != 0 {
+		if node2.key.Compare(key2) <= 0 {
 			values = append(values, node2.value)
 			node2 = node2.indexLevel[0].nextNode
 		} else {
 			break
 		}
 	}
-	if node2 == nil {
-		e = errors.New("Query Key2: " + key2.String() + " is not Existed! \n")
-		return nil, e
-	}
-	values = append(values, node2.value)
 	//sl.mtx.RUnlock()
 	return values, nil
 }
@@ -340,7 +377,7 @@ func (sl *SkipList[T]) DeleteNode(key Comparable) (err error) {
 }
 
 // AddNode 向跳表中添加节点 节点键值相同则为更新节点值 pass
-func (sl *SkipList[T]) AddNode(key Comparable, value T) (err error) {
+func (sl *SkipList[T]) AddNode(key Comparable, value T) {
 
 	// 准备阶段
 	indexHeight := sl.randomLevel()
@@ -365,7 +402,7 @@ func (sl *SkipList[T]) AddNode(key Comparable, value T) (err error) {
 				break
 			} else if compareResult == 0 { // 如果结果为0 说明s1 == s2
 				pointer.indexLevel[i].nextNode.value = value
-				return nil
+				return
 			}
 			pointer = pointer.indexLevel[i].nextNode
 		}
@@ -388,5 +425,9 @@ func (sl *SkipList[T]) AddNode(key Comparable, value T) (err error) {
 	sl.length += 1
 	//sl.mtx.Unlock()
 
-	return nil
+	return
+}
+
+func (sl *SkipList[T]) Length() int {
+	return int(sl.length)
 }

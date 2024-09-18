@@ -26,6 +26,11 @@ var (
 
 	IndexIsIllegal         = errors.New("Index is Illegal to Access List! ")
 	RemoveCountIsNotEnough = errors.New("List Do Not Have Enough Element to Remove! ")
+
+	// ZSet 使用的错误
+
+	MemberIsNotExisted = errors.New("Member is Not Existed! ")
+	MemberIsExpired    = errors.New("This Member was Expired! ")
 )
 
 // 不准备常驻的错误们
