@@ -36,6 +36,7 @@ type MisakaDataBase struct {
 
 	hashIndex   *index.HashIndex
 	stringIndex *index.StringIndex
+	listIndex   *index.ListIndex
 }
 
 func Init() (*MisakaDataBase, error) {
@@ -72,10 +73,18 @@ func Init() (*MisakaDataBase, error) {
 			}
 			logger.GenerateInfoLog("String Index is Ready!")
 		}
+
+		if key == storage.List {
+			database.listIndex, e = index.BuildListIndex(value, archiveFiles[storage.List], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+			if e != nil {
+				return nil, e
+			}
+			logger.GenerateInfoLog("List Index is Ready! ")
+		}
 	}
 
 	// 开始检查索引是否构建 如果否 构建一个空的索引
-	// 这是防activeFiles本身
+	// 这是防activeFiles本身不存在
 	if database.hashIndex == nil {
 		database.hashIndex, e = index.BuildHashIndex(nil, nil, RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
 		if e != nil {
@@ -91,6 +100,13 @@ func Init() (*MisakaDataBase, error) {
 			return nil, e
 		}
 		logger.GenerateInfoLog("String Index is Ready!")
+	}
+	if database.listIndex == nil {
+		database.listIndex, e = index.BuildListIndex(nil, archiveFiles[storage.List], RecordFileIOMode, MisakaDataBaseFolderPath, RecordFileMaxSize, time.Millisecond*SyncDuration)
+		if e != nil {
+			return nil, e
+		}
+		logger.GenerateInfoLog("List Index is Ready! ")
 	}
 
 	// 初始化服务器
@@ -119,6 +135,10 @@ func (db *MisakaDataBase) Destroy() error {
 		return e
 	}
 	e = db.stringIndex.CloseIndex()
+	if e != nil {
+		return e
+	}
+	e = db.listIndex.CloseIndex()
 	if e != nil {
 		return e
 	}
@@ -191,7 +211,7 @@ func (db *MisakaDataBase) ServerInit() error {
 						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
 						return
 					}
-					var expiredAt int64 // todo 过期时间无法设置这个bug只修了string的 别的没修呢 记得下次修
+					var expiredAt int64
 					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[3]), expired)
 					if e != nil {
 						conn.WriteError(e.Error() + string(cmd.Args[3]))
@@ -406,6 +426,11 @@ func (db *MisakaDataBase) ServerInit() error {
 						return
 					}
 					e = db.hashIndex.HSetNX(string(cmd.Args[1]), string(cmd.Args[2]), string(cmd.Args[3]), expiredAt)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
 				} else {
 					// 参数数量错误
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
@@ -510,6 +535,195 @@ func (db *MisakaDataBase) ServerInit() error {
 					return
 				} else {
 					// 参数数量错误
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+
+			// list 部分的命令解析
+			case "linsert":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: linsert")
+				if len(cmd.Args) == 4 {
+					// linsert key index value
+					i, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Index As Number: " + e.Error())
+						return
+					}
+					e = db.listIndex.LInsert(cmd.Args[1], i, cmd.Args[3], -1)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else if len(cmd.Args) == 6 {
+					// linsert key index value ex/px time
+					i, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Index As Number: " + e.Error())
+						return
+					}
+					expired, e = strconv.Atoi(string(cmd.Args[5]))
+					if e != nil {
+						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
+						return
+					}
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[4]), expired)
+					e = db.listIndex.LInsert(cmd.Args[1], i, cmd.Args[3], expiredAt)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lpop":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: lpop")
+				if len(cmd.Args) == 2 {
+					// lpop key
+					v, e := db.listIndex.LPop(cmd.Args[1])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(string(v))
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lpush":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: lpush")
+				if len(cmd.Args) == 3 {
+					// lpush key value
+					e = db.listIndex.LPush(cmd.Args[1], -1, cmd.Args[2])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else if len(cmd.Args) == 5 {
+					// lpush key value ex/px time
+					expired, e = strconv.Atoi(string(cmd.Args[4]))
+					if e != nil {
+						conn.WriteError("Cannot Read Expired As Number: " + e.Error())
+						return
+					}
+					var expiredAt int64
+					expiredAt, e = util.CalcTimeUnix(string(cmd.Args[3]), expired)
+					e = db.listIndex.LPush(cmd.Args[1], expiredAt, cmd.Args[3])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lset":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: lset")
+				if len(cmd.Args) == 4 {
+					// lset key index value
+					i, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Index As Number: " + e.Error())
+						return
+					}
+					e = db.listIndex.LSet(cmd.Args[1], i, cmd.Args[2])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lrem":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: lrem")
+				if len(cmd.Args) == 4 {
+					// lrem key index value
+					i, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Index As Number: " + e.Error())
+						return
+					}
+					e = db.listIndex.LRem(cmd.Args[1], i, cmd.Args[2])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString("OK")
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "llen":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 2 {
+					// llen key
+					result, e := db.listIndex.LLen(cmd.Args[1])
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteInt(result)
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lindex":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 3 {
+					// lindex key index
+					i, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Index As Number: " + e.Error())
+						return
+					}
+					result, e := db.listIndex.LIndex(cmd.Args[1], i)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(string(result))
+					return
+				} else {
+					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
+					return
+				}
+			case "lrange":
+				logger.GenerateInfoLog(conn.RemoteAddr() + ": Query: " + string(cmd.Args[0]))
+				if len(cmd.Args) == 4 {
+					// lrange key start end
+					start, e := strconv.Atoi(string(cmd.Args[2]))
+					if e != nil {
+						conn.WriteError("Cannot Read Start As Number: " + e.Error())
+						return
+					}
+					end, e := strconv.Atoi(string(cmd.Args[3]))
+					if e != nil {
+						conn.WriteError("Cannot Read End As Number: " + e.Error())
+						return
+					}
+					result, e := db.listIndex.LRange(cmd.Args[1], start, end)
+					if e != nil {
+						conn.WriteError(e.Error())
+						return
+					}
+					conn.WriteString(util.TurnByteArray2ToString(result))
+					return
+				} else {
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
 					return
 				}

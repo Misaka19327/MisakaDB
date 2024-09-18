@@ -25,6 +25,12 @@ type EntryType byte
 const (
 	TypeDelete EntryType = iota + 1 // 标识记录删除信息的entry
 	TypeRecord                      // 标识记录信息的entry
+
+	TypeLInsert // 以下为 list 准备的 entry type
+	TypeLPop
+	TypeLPush
+
+	TypeListExpired // 过期标识 专门问 list 和 zset 用的
 )
 
 // 因为整个数据库的操作 增删改查 体现在文件上的只有删除和新增两种（改可以通过新增的方式进行覆盖）

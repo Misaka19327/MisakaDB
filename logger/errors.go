@@ -21,6 +21,11 @@ var (
 	ParameterIsNotAllowed = errors.New("Parameter is Not Allowed! ")
 
 	TimeUnitIsNotSupported = errors.New("Time Unit is Not Supported! ")
+
+	// ListIndex 使用的错误
+
+	IndexIsIllegal         = errors.New("Index is Illegal to Access List! ")
+	RemoveCountIsNotEnough = errors.New("List Do Not Have Enough Element to Remove! ")
 )
 
 // 不准备常驻的错误们

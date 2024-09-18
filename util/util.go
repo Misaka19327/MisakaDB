@@ -71,3 +71,16 @@ func CalcTimeUnix(unit string, t int) (int64, error) {
 	}
 	return 0, logger.TimeUnitIsNotSupported
 }
+
+// BytesArrayCompare 比较两个字节数组是否相同
+func BytesArrayCompare(array1, array2 []byte) bool {
+	if len(array1) != len(array2) {
+		return false
+	}
+	for i := range array1 {
+		if array1[i] != array2[i] {
+			return false
+		}
+	}
+	return true
+}

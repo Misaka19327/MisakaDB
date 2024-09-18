@@ -83,7 +83,7 @@ func BuildStringIndex(activeFile *storage.RecordFile, archivedFile map[uint32]*s
 	return result, nil
 }
 
-// CloseIndex 关闭Hash索引 同时停止定时Sync 关闭文件
+// CloseIndex 关闭 String 索引 同时停止定时Sync 关闭文件
 func (si *StringIndex) CloseIndex() error {
 	si.mutex.Lock()
 	defer si.mutex.Unlock()

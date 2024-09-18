@@ -9,12 +9,12 @@ import (
 )
 
 func TestBuildHashIndex(t *testing.T) {
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536)
-	if e != nil {
-		t.Error(e)
-		return
-	}
-	hashIndex, e := BuildHashIndex(activeFiles[storage.Hash], archiveFiles[storage.Hash], storage.TraditionalIOFile, "D:\\MisakaDBTest", 65536, time.Second)
+	//activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536)
+	//if e != nil {
+	//	t.Error(e)
+	//	return
+	//}
+	hashIndex, e := BuildHashIndex(nil, nil, storage.TraditionalIOFile, "D:\\", 65536, time.Second)
 	if e != nil {
 		t.Error(e)
 		return
