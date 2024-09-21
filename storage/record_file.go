@@ -79,7 +79,7 @@ func NewRecordFile(ioType FileIOType, dataType FileForData, fid uint32, path str
 	var fileWriter file.FileWriter
 	switch ioType {
 	case MMapIOFile:
-		fileWriter, e = file.NewFileMMap(fileFullPath, fileMaxSize)
+		fileWriter, e = file.NewMMapFile(fileFullPath, fileMaxSize)
 	case TraditionalIOFile:
 		fileWriter, e = file.NewFileIO(fileFullPath)
 	}
@@ -99,7 +99,7 @@ func LoadRecordFileFromDisk(filePath string, fileMaxSize int64, ioType FileIOTyp
 	var e error
 	switch ioType {
 	case MMapIOFile:
-		f, e = file.NewFileMMap(filePath, fileMaxSize)
+		f, e = file.NewMMapFile(filePath, fileMaxSize)
 	case TraditionalIOFile:
 		f, e = file.NewFileIO(filePath)
 	}

@@ -115,16 +115,19 @@ func TestBuildHashIndex4(t *testing.T) {
 }
 
 func TestBuildHashIndex5(t *testing.T) {
-	l, _ := logger.NewLogger("D:\\MisakaDBLog")
+	l, e := logger.NewLogger("/home/MisakaDBLog")
+	if e != nil {
+		t.Fatal(e)
+	}
 	l.ListenLoggerChannel()
 
 	startTime := time.Now()
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 10983040, storage.MMapIOFile)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("/home/MisakaDB", 10983040, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
 	}
-	hashIndex, e := BuildHashIndex(activeFiles[storage.Hash], archiveFiles[storage.Hash], storage.MMapIOFile, "D:\\MisakaDBTest", 10983040, time.Second)
+	hashIndex, e := BuildHashIndex(activeFiles[storage.Hash], archiveFiles[storage.Hash], storage.MMapIOFile, "/home/MisakaDB", 10983040, time.Second)
 	if e != nil {
 		t.Error(e)
 		return
@@ -143,20 +146,20 @@ func TestBuildHashIndex5(t *testing.T) {
 
 	t.Log("Test Data is Ready!")
 
-	//startTime = time.Now()
-	//for key, fieldMap := range testData {
-	//	for field, value := range fieldMap {
-	//		e = hashIndex.HSet(key, field, value, time.Now().Add(10 * time.Minute).UnixMilli())
-	//		if e != nil {
-	//			t.Error(e)
-	//			return
-	//		}
-	//	}
-	//}
-	//
-	//endTime = time.Now()
-	//t.Log(endTime.Sub(startTime).Seconds())
-	//startTime = time.Now()
+	startTime = time.Now()
+	for key, fieldMap := range testData {
+		for field, value := range fieldMap {
+			e = hashIndex.HSet(key, field, value, time.Now().Add(10*time.Minute).UnixMilli())
+			if e != nil {
+				t.Error(e)
+				return
+			}
+		}
+	}
+
+	endTime = time.Now()
+	t.Log(endTime.Sub(startTime).Seconds())
+	startTime = time.Now()
 
 	var getValue string
 	count := 0
