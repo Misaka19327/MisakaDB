@@ -79,7 +79,7 @@ func NewRecordFile(ioType FileIOType, dataType FileForData, fid uint32, path str
 	var fileWriter file.FileWriter
 	switch ioType {
 	case MMapIOFile:
-		return nil, logger.MMapIsNotSupport
+		fileWriter, e = file.NewFileMMap(fileFullPath, fileMaxSize)
 	case TraditionalIOFile:
 		fileWriter, e = file.NewFileIO(fileFullPath)
 	}
@@ -91,11 +91,18 @@ func NewRecordFile(ioType FileIOType, dataType FileForData, fid uint32, path str
 }
 
 // LoadRecordFileFromDisk 加载一个文件
-func LoadRecordFileFromDisk(filePath string, fileMaxSize int64) (*RecordFile, error) {
+func LoadRecordFileFromDisk(filePath string, fileMaxSize int64, ioType FileIOType) (*RecordFile, error) {
 	if _, e := os.Stat(filePath); e != nil {
 		return nil, logger.FileIsNotExist
 	}
-	f, e := file.NewFileIO(filePath)
+	var f file.FileWriter
+	var e error
+	switch ioType {
+	case MMapIOFile:
+		f, e = file.NewFileMMap(filePath, fileMaxSize)
+	case TraditionalIOFile:
+		f, e = file.NewFileIO(filePath)
+	}
 	if e != nil {
 		return nil, e
 	}

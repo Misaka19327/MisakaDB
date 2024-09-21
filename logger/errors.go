@@ -31,6 +31,8 @@ var (
 
 	MemberIsNotExisted = errors.New("Member is Not Existed! ")
 	MemberIsExpired    = errors.New("This Member was Expired! ")
+
+	OffsetIsIllegal = errors.New("Offset is exceeded the fileContentSize! ")
 )
 
 // 不准备常驻的错误们

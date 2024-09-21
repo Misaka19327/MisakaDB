@@ -8,7 +8,7 @@ import (
 
 // RecordFilesInit 按路径读取所有文件 并且转换为RecordFile 按数据类型进行分类 默认情况下编号最大的文件是活跃文件
 // attention 活跃文件也存在于归档文件中 等到活跃文件写满之后 再开一个活跃文件存入归档文件即可 之前的活跃文件自动成为归档文件
-func RecordFilesInit(path string, fileMaxSize int64) (activeFiles map[FileForData]*RecordFile, archiveFiles map[FileForData]map[uint32]*RecordFile, e error) {
+func RecordFilesInit(path string, fileMaxSize int64, ioType FileIOType) (activeFiles map[FileForData]*RecordFile, archiveFiles map[FileForData]map[uint32]*RecordFile, e error) {
 	var filesPath []string
 	var walkFunc = func(path string, info os.FileInfo, err error) error {
 		if !info.IsDir() {
@@ -28,7 +28,7 @@ func RecordFilesInit(path string, fileMaxSize int64) (activeFiles map[FileForDat
 	var recordFile *RecordFile
 	for _, i := range filesPath {
 		// 读取文件
-		recordFile, e = LoadRecordFileFromDisk(i, fileMaxSize)
+		recordFile, e = LoadRecordFileFromDisk(i, fileMaxSize, ioType)
 		if e != nil {
 			return nil, nil, e
 		}

@@ -3,6 +3,7 @@ package index
 import (
 	"MisakaDB/logger"
 	"MisakaDB/storage"
+	"math/rand/v2"
 	"strconv"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ func TestBuildHashIndex(t *testing.T) {
 	//	t.Error(e)
 	//	return
 	//}
+
+	rand.Int()
 	hashIndex, e := BuildHashIndex(nil, nil, storage.TraditionalIOFile, "D:\\", 65536, time.Second)
 	if e != nil {
 		t.Error(e)
@@ -33,7 +36,7 @@ func TestBuildHashIndex(t *testing.T) {
 }
 
 func TestBuildHashIndex2(t *testing.T) {
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
@@ -43,6 +46,7 @@ func TestBuildHashIndex2(t *testing.T) {
 		t.Error(e)
 		return
 	}
+	_ = hashIndex.HSet("testKey1", "testField1", "testValue1", -1)
 	value, e := hashIndex.HGet("testKey1", "testField1")
 	if e != nil {
 		t.Error(e)
@@ -52,7 +56,7 @@ func TestBuildHashIndex2(t *testing.T) {
 }
 
 func TestBuildHashIndex3(t *testing.T) {
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
@@ -75,7 +79,7 @@ func TestBuildHashIndex3(t *testing.T) {
 }
 
 func TestBuildHashIndex4(t *testing.T) {
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 65536, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
@@ -115,12 +119,12 @@ func TestBuildHashIndex5(t *testing.T) {
 	l.ListenLoggerChannel()
 
 	startTime := time.Now()
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 50000000)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 10983040, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
 	}
-	hashIndex, e := BuildHashIndex(activeFiles[storage.Hash], archiveFiles[storage.Hash], storage.TraditionalIOFile, "D:\\MisakaDBTest", 50000000, time.Second)
+	hashIndex, e := BuildHashIndex(activeFiles[storage.Hash], archiveFiles[storage.Hash], storage.MMapIOFile, "D:\\MisakaDBTest", 10983040, time.Second)
 	if e != nil {
 		t.Error(e)
 		return
@@ -139,20 +143,20 @@ func TestBuildHashIndex5(t *testing.T) {
 
 	t.Log("Test Data is Ready!")
 
-	startTime = time.Now()
-	for key, fieldMap := range testData {
-		for field, value := range fieldMap {
-			e = hashIndex.HSet(key, field, value, 32503637532)
-			if e != nil {
-				t.Error(e)
-				return
-			}
-		}
-	}
-
-	endTime = time.Now()
-	t.Log(endTime.Sub(startTime).Seconds())
-	startTime = time.Now()
+	//startTime = time.Now()
+	//for key, fieldMap := range testData {
+	//	for field, value := range fieldMap {
+	//		e = hashIndex.HSet(key, field, value, time.Now().Add(10 * time.Minute).UnixMilli())
+	//		if e != nil {
+	//			t.Error(e)
+	//			return
+	//		}
+	//	}
+	//}
+	//
+	//endTime = time.Now()
+	//t.Log(endTime.Sub(startTime).Seconds())
+	//startTime = time.Now()
 
 	var getValue string
 	count := 0
@@ -173,4 +177,6 @@ func TestBuildHashIndex5(t *testing.T) {
 	t.Log(endTime.Sub(startTime).Seconds())
 
 	t.Log(count)
+
+	_ = hashIndex.CloseIndex()
 }

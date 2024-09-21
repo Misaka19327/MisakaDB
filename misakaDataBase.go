@@ -52,7 +52,7 @@ func Init() (*MisakaDataBase, error) {
 	logger.GenerateInfoLog("Logger is Ready!")
 
 	// 读取文件
-	activeFiles, archiveFiles, e := storage.RecordFilesInit(MisakaDataBaseFolderPath, RecordFileMaxSize)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit(MisakaDataBaseFolderPath, RecordFileMaxSize, RecordFileIOMode)
 	if e != nil {
 		return nil, e
 	}

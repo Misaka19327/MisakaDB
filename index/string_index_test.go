@@ -14,7 +14,7 @@ func TestBuildStringIndex(t *testing.T) {
 	l.ListenLoggerChannel()
 
 	startTime := time.Now()
-	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 50000000)
+	activeFiles, archiveFiles, e := storage.RecordFilesInit("D:\\MisakaDBTest", 50000000, storage.MMapIOFile)
 	if e != nil {
 		t.Error(e)
 		return
